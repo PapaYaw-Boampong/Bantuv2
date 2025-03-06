@@ -18,18 +18,10 @@ class Contribution(SQLModel, table=True):
     flagged: bool = Field(default=False)  # New field to indicate if the contribution is flagged
     active: bool = Field(default=True)  # New field to indicate if the contribution is active
 
-    parent_contribution_id: Optional[str] = Field(default=None, foreign_key="contribution.id")
-
     # Relationships
     user: "User" = Relationship(back_populates="contributions")
     language: "Language" = Relationship(back_populates="contributions")
     votes: List["Vote"] = Relationship(back_populates="contribution")
-
-    original_contribution: Optional["Contribution"] = Relationship(
-        back_populates="corrections",
-        sa_relationship_kwargs={"remote_side": "Contribution.id"}
-    )
-    corrections: List["Contribution"] = Relationship(back_populates="original_contribution")
 
     # New Relationship for flagged contributions
     flagged_audio: List["FlaggedAudio"] = Relationship(back_populates="contribution")
