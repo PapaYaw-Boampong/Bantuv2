@@ -4,7 +4,6 @@ from datetime import datetime
 
 from user import User
 from language import Language
-from vote import Vote
 
 
 # ===================== TRANSCRIPTION SAMPLE TABLE =====================

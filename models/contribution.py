@@ -11,10 +11,8 @@ from models.vote import Vote
 class Contribution(SQLModel, table=True):
     id: str = Field(primary_key=True, index=True)
     user_id: str = Field(foreign_key="user.id")
-    language_id: str = Field(foreign_key="language.id")
-    data_id: str = Field(foreign_key="storage.id")
+    data_id: str = Field(foreign_key="data_store.id")
 
-    content: Dict[str, str] = Field(sa_column_kwargs={"type": "json"}) # Store text translations and transcriptions as JSON
     contribution_type: str  # "translation" or "transcription"
     created_at: datetime = Field(default_factory=datetime.utcnow)
     flagged: bool = Field(default=False)  # New field to indicate if the contribution is flagged
