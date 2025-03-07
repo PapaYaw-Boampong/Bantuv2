@@ -8,8 +8,21 @@ from contribution import Contribution
 
 # ===================== LANGUAGES TABLE =====================
 class Language(SQLModel, table=True):
-    id: str = Field(default_factory=lambda: str(uuid.uuid4()), primary_key=True, index=True)
+    id: str = Field(
+        default_factory=lambda: str(uuid.uuid4()),
+        primary_key=True,
+        index=True
+    )
+
     name: str
+    description: Optional[str] = None
+    code: str = Field(
+        index=True, unique=True
+    )  # ISO code
+
+    # Statistics
+    contribution_count: int = Field(default=0)
+    contributor_count: int = Field(default=0)
 
     # Relationships
     contributions: List["Contribution"] = Relationship(back_populates="language")
@@ -26,3 +39,6 @@ class UserLanguage(SQLModel, table=True):
     # Relationships
     user: "User" = Relationship(back_populates="user_languages")
     language: "Language" = Relationship(back_populates="user_languages")
+
+
+

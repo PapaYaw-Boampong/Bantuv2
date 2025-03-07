@@ -15,9 +15,8 @@ class TranscriptionSample(SQLModel, table=True):
 
     audio_urls: List[Dict[str, str]] = Field(sa_column_kwargs={
         "type": "json"})  # Stores multiple validated speech samples of the audio URLsaudio_url: str  # Stores the
-
-    # URL/path of the audio file
     transcription_text: str  # Stores the transcribed text
+    # translation_text: str  # Stores the translated text
     created_at: datetime = Field(default_factory=datetime.utcnow)
     active: bool = Field(default=False)  # Becomes True when it meets a threshold of upvotes
 

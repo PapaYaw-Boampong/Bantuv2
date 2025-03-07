@@ -11,4 +11,4 @@ class Storage(SQLModel, table=True):
     file_size: int
     uploaded_at: str
 
-    user: "User" = Relationship()
+    user: "User" = Relationship(back_populates="storage")

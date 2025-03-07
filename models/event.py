@@ -3,18 +3,40 @@ import uuid
 from sqlmodel import SQLModel, Field, Relationship
 from typing import Optional, List
 from datetime import datetime
-
+from enum import Enum as PyEnum
 from user import User
+
+
+class EventType(str, PyEnum):
+    TRANSCRIPTION_CHALLENGE = "transcription_challenge"
+    TRANSLATION_SPRINT = "translation_sprint"
+    CORRECTION_MARATHON = "correction_marathon"
 
 
 # ===================== EVENTS TABLE =====================
 class Event(SQLModel, table=True):
-    id: str = Field(default_factory=lambda: str(uuid.uuid4()), primary_key=True, index=True)
+    __tablename__ = "events"
+
+    id: str = Field(
+        default_factory=lambda: str(uuid.uuid4()),
+        primary_key=True,
+        index=True
+    )
+
     event_name: str
     description: Optional[str] = None
+    EventType: EventType
     start_date: datetime
     end_date: datetime
+    is_active: bool = Field(default=True)
     created_at: datetime = Field(default_factory=datetime.utcnow)
+
+    # Target metrics
+    target_contribution_count: Optional[int] = None
+
+    # Statistics
+    participant_count: int = Field(default=0)
+    contribution_count: int = Field(default=0)
 
     # Relationship
     participants: List["EventParticipation"] = Relationship(back_populates="event")
@@ -22,13 +44,22 @@ class Event(SQLModel, table=True):
 
 # ===================== EVENT PARTICIPATION TABLE =====================
 class EventParticipation(SQLModel, table=True):
-    id: str = Field(default_factory=lambda: str(uuid.uuid4()), primary_key=True, index=True)
+    id: str = Field(
+        default_factory=lambda: str(uuid.uuid4()),
+        primary_key=True,
+        index=True
+    )
+
     event_id: str = Field(foreign_key="event.id")
     user_id: str = Field(foreign_key="user.id")
+
+    # Statistics
     total_hours_speech: int = Field(default=0)
     total_sentences_translated: int = Field(default=0)
     total_tokens_produced: int = Field(default=0)
     total_points: int = Field(default=0)
+
+    # Metadata
     created_at: datetime = Field(default_factory=datetime.utcnow)
     updated_at: datetime = Field(default_factory=datetime.utcnow)
 
