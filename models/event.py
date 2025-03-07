@@ -1,3 +1,5 @@
+import uuid
+
 from sqlmodel import SQLModel, Field, Relationship
 from typing import Optional, List
 from datetime import datetime
@@ -7,7 +9,7 @@ from user import User
 
 # ===================== EVENTS TABLE =====================
 class Event(SQLModel, table=True):
-    id: str = Field(primary_key=True, index=True)
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()), primary_key=True, index=True)
     event_name: str
     description: Optional[str] = None
     start_date: datetime
@@ -20,7 +22,7 @@ class Event(SQLModel, table=True):
 
 # ===================== EVENT PARTICIPATION TABLE =====================
 class EventParticipation(SQLModel, table=True):
-    id: str = Field(primary_key=True, index=True)
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()), primary_key=True, index=True)
     event_id: str = Field(foreign_key="event.id")
     user_id: str = Field(foreign_key="user.id")
     total_hours_speech: int = Field(default=0)

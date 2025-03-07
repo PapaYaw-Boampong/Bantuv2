@@ -1,5 +1,7 @@
+import uuid
+
 from sqlmodel import SQLModel, Field, Relationship
-from typing import Optional, List, Dict
+from typing import List, Dict
 from datetime import datetime
 
 from user import User
@@ -8,7 +10,7 @@ from language import Language
 
 # ===================== TRANSCRIPTION SAMPLE TABLE =====================
 class TranscriptionSample(SQLModel, table=True):
-    id: str = Field(primary_key=True, index=True)
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()), primary_key=True, index=True)
     language_id: str = Field(foreign_key="language.id")
 
     audio_urls: List[Dict[str, str]] = Field(sa_column_kwargs={
@@ -25,7 +27,7 @@ class TranscriptionSample(SQLModel, table=True):
 
 # ===================== TRANSLATION SAMPLE TABLE =====================
 class TranslationSample(SQLModel, table=True):
-    id: str = Field(primary_key=True, index=True)
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()), primary_key=True, index=True)
     language_id: str = Field(foreign_key="language.id")
 
     original_text: str  # The original text in English
