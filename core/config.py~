@@ -2,7 +2,7 @@ import os
 from typing import List, Optional, Union, Dict, Any
 from pydantic import BaseModel, field_validator, PostgresDsn
 from dotenv import load_dotenv
-import urllib.parse
+
 # Load environment variables
 load_dotenv()
 
@@ -54,12 +54,10 @@ class Settings(BaseModel):
     def assemble_db_connection(self, v: Optional[str], values: Dict[str, Any]) -> Any:
         if isinstance(v, str):
             return v
-        # URL Encode the password to handle special characters
-        encoded_password = urllib.parse.quote_plus(values.get("POSTGRES_PASSWORD"))
         return PostgresDsn.build(
             scheme="postgresql",
             username=values.get("POSTGRES_USER"),
-            password= encoded_password,
+            password=values.get("POSTGRES_PASSWORD"),
             host=values.get("POSTGRES_HOST"),
             port=values.get("POSTGRES_PORT"),
             path=f"/{values.get('POSTGRES_DB') or ''}",

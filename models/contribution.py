@@ -51,7 +51,6 @@ class UserContributionAccess(SQLModel, table=True):
     # Relationships
     user: "User" = Relationship(back_populates="user_contribution_access")
 
-
 #contribution v2
 # ===================== TRANSCRIPTION CONTRIBUTION TABLE =====================
 # class TranscriptionContribution(SQLModel, table=True):
@@ -82,8 +81,6 @@ class UserContributionAccess(SQLModel, table=True):
 #     user: "User" = Relationship(back_populates="translation_contributions")
 #     votes: List["Vote"] = Relationship(back_populates="translation_contribution")
 #     translation_sample: "TranslationSample" = Relationship(back_populates="translation_contributions")
-
-
 
 
 # #contributions v3

@@ -74,8 +74,8 @@ async def login(
     }
 
 
-@router.get("/user", response_model=UserProfileResponse)
-async def get_user(
+@router.get("/me", response_model=UserProfileResponse)
+async def get_user_me(
         db: AsyncSession = Depends(get_session),
         current_user: User = Depends(get_current_active_user)
 ) -> Any:
@@ -87,8 +87,8 @@ async def get_user(
     return profile
 
 
-@router.put("/user", response_model=UserResponse)
-async def update_user(
+@router.put("/me", response_model=UserResponse)
+async def update_user_me(
         *,
         db: AsyncSession = Depends(get_session),
         user_in: UserUpdate,
@@ -105,7 +105,7 @@ async def update_user(
     return user
 
 
-@router.post("/user/change-password", response_model=Dict[str, bool])
+@router.post("/me/change-password", response_model=Dict[str, bool])
 async def change_password(
         *,
         db: AsyncSession = Depends(get_session),
