@@ -8,6 +8,7 @@ from models.vote import Vote
 
 
 # ===================== CONTRIBUTIONS TABLE =====================
+
 class Contribution(SQLModel, table=True):
     id: str = Field(primary_key=True, index=True)
     user_id: str = Field(foreign_key="user.id")
