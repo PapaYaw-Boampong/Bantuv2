@@ -5,6 +5,8 @@ import torch
 from unsloth import FastLanguageModel
 from transformers import AutoTokenizer
 
+# For Y'all (Yaw): This could possibly be better integrated with the main database. 
+
 # Database setup
 DATABASE_URL = "postgresql://user:password@localhost/translation_db" # dummy for now
 engine = create_engine(DATABASE_URL)
@@ -15,6 +17,8 @@ Base = declarative_base()
 MODEL_PATH = "./fine_tuned_deepseek_r1"
 fine_tuned_model, fine_tuned_tokenizer = FastLanguageModel.from_pretrained(MODEL_PATH)
 FastLanguageModel.for_inference(fine_tuned_model)
+
+# The models below are those suitable for the upvoting algorithm
 
 # Models
 class User(Base):
@@ -41,11 +45,11 @@ class FinalTranslation(Base):
     reviewed_by = Column(String, default='DeepSeek-R1')
     created_at = Column(TIMESTAMP, default=func.now())
 
-# Initialize database
+# Initialize database (Possibly redundant)
 def init_db():
     Base.metadata.create_all(bind=engine)
 
-# FastAPI App
+# FastAPI App (Possibly redundant)
 app = FastAPI()
 
 # Dependency to get DB session
