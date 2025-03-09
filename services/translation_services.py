@@ -8,7 +8,7 @@ from transformers import AutoTokenizer
 # For Y'all (Yaw): This could possibly be better integrated with the main database. 
 
 # Database setup
-DATABASE_URL = "postgresql://user:password@localhost/translation_db" # dummy for now
+DATABASE_URL = "postgresql://user:password@localhost/translation_db" # replace with our actual database URL
 engine = create_engine(DATABASE_URL)
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 Base = declarative_base()
