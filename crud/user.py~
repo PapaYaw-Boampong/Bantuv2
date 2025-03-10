@@ -1,77 +1,75 @@
-# app/repositories/user_repository.py
 from typing import List, Optional, Dict, Any
-from sqlmodel import Session, select
+from sqlmodel import select
 from models.user import User
 from sqlalchemy.ext.asyncio import AsyncSession
 from datetime import datetime
-import uuid
 
 
 class UserCrud:
     def __init__(self, db: AsyncSession):
         self.db = db
 
-    def create(self, user_data: Dict[str, Any]) -> User:
+    async def create(self, user_data: Dict[str, Any]) -> User:
         """
-        Create a new user
+        Create a new user (ASYNC)
         """
         user = User(**user_data)
         self.db.add(user)
-        self.db.commit()
-        self.db.refresh(user)
+        await self.db.commit()
+        await self.db.refresh(user)
         return user
 
-    def get_by_id(self, user_id: str) -> Optional[User]:
+    async def get_by_id(self, user_id: str) -> Optional[User]:
         """
-        Get a user by ID
+        Get a user by ID (ASYNC)
         """
-        return self.db.get(User, user_id)
+        statement = select(User).where(User.id == user_id)
+        result = await self.db.execute(statement)
+        return result.scalars().first()
 
-    def get_by_username(self, username: str) -> Optional[User]:
+    async def get_by_username(self, username: str) -> Optional[User]:
         """
-        Get a user by username
+        Get a user by username (ASYNC)
         """
         statement = select(User).where(User.username == username)
-        results = self.db.exec(statement)
-        return results.first()
+        result = await self.db.execute(statement)
+        return result.scalars().first()
 
-    def get_by_email(self, email: str) -> Optional[User]:
+    async def get_by_email(self, email: str) -> Optional[User]:
         """
-        Get a user by email
+        Get a user by email (ASYNC)
         """
         statement = select(User).where(User.email == email)
-        results = self.db.exec(statement)
-        return results.first()
+        result = await self.db.execute(statement)
+        return result.scalars().first()
 
-    def get_all(self, skip: int = 0, limit: int = 100) -> List[User]:
+    async def get_all(self, skip: int = 0, limit: int = 100) -> List[User]:
         """
-        Get all users with pagination
+        Get all users with pagination (ASYNC)
         """
         statement = select(User).offset(skip).limit(limit)
-        results = self.db.exec(statement)
-        return results.all()
+        results = await self.db.execute(statement)
+        return list(results.scalars().all())
 
-    def update(self, user_id: str, update_data: Dict[str, Any]) -> Optional[User]:
+    async def update(self, user_id: str, update_data: Dict[str, Any]) -> Optional[User]:
         """
-        Update a user
+        Update a user (ASYNC)
         """
-        user = self.get_by_id(user_id)
+        user = await self.get_by_id(user_id)
         if not user:
             return None
 
-        # Update the user object with the new data
         for key, value in update_data.items():
             setattr(user, key, value)
 
-        # Always update the updated_at timestamp
         user.updated_at = datetime.utcnow()
 
         self.db.add(user)
-        self.db.commit()
-        self.db.refresh(user)
+        await self.db.commit()
+        await self.db.refresh(user)
         return user
 
-    def increment_contribution_stats(
+    async def increment_contribution_stats(
             self,
             user_id: str,
             is_accepted: bool = False,
@@ -81,46 +79,40 @@ class UserCrud:
             points: int = 0
     ) -> Optional[User]:
         """
-        Increment a user's contribution statistics
+        Increment a user's contribution statistics (ASYNC)
         """
-        user = self.get_by_id(user_id)
+        user = await self.get_by_id(user_id)
         if not user:
             return None
 
-        # Increment contribution count
         user.contribution_count += 1
-
-        # Increment accepted contributions if applicable
         if is_accepted:
             user.accepted_contributions += 1
 
-        # Update other statistics
         user.total_hours_speech += hours_speech
         user.total_sentences_translated += sentences_translated
         user.total_tokens_produced += tokens_produced
         user.total_points += points
-
-        # Update timestamp
         user.updated_at = datetime.utcnow()
 
         self.db.add(user)
-        self.db.commit()
-        self.db.refresh(user)
+        await self.db.commit()
+        await self.db.refresh(user)
         return user
 
-    def delete(self, user_id: str) -> bool:
+    async def delete(self, user_id: str) -> bool:
         """
-        Delete a user
+        Delete a user (ASYNC)
         """
-        user = self.get_by_id(user_id)
+        user = await self.get_by_id(user_id)
         if not user:
             return False
 
-        self.db.delete(user)
-        self.db.commit()
+        await self.db.delete(user)
+        await self.db.commit()
         return True
 
-    def search_users(
+    async def search_users(
             self,
             username: Optional[str] = None,
             email: Optional[str] = None,
@@ -130,11 +122,10 @@ class UserCrud:
             limit: int = 100
     ) -> List[User]:
         """
-        Search for users with various filters
+        Search for users with various filters (ASYNC)
         """
         query = select(User)
 
-        # Apply filters if provided
         if username:
             query = query.where(User.username.contains(username))
 
@@ -147,32 +138,28 @@ class UserCrud:
         if min_reputation is not None:
             query = query.where(User.reputation_score >= min_reputation)
 
-        # Apply pagination
         query = query.offset(skip).limit(limit)
 
-        results = self.db.exec(query)
-        return list(results.all())
+        results = await self.db.execute(query)
+        return list(results.scalars().all())
 
-    def calculate_reputation_score(self, user_id: str) -> Optional[float]:
+    async def calculate_reputation_score(self, user_id: str) -> Optional[float]:
         """
-        Calculate and update a user's reputation score based on their contributions
+        Calculate and update a user's reputation score (ASYNC)
         """
-        user = self.get_by_id(user_id)
+        user = await self.get_by_id(user_id)
         if not user:
             return None
 
-        # Simple reputation formula: (accepted / total) * (1 + log(total))
-        # This rewards both quality (acceptance rate) and quantity (total contributions)
         if user.contribution_count > 0:
             acceptance_rate = user.accepted_contributions / user.contribution_count
-            volume_factor = 1 + (user.contribution_count / 10)  # Simplified log calculation
+            volume_factor = 1 + (user.contribution_count / 10)
 
-            # Calculate reputation score (0-100 scale)
-            user.reputation_score = min(100, acceptance_rate * volume_factor * 20)
+            user.reputation_score = min(100, int(acceptance_rate * volume_factor * 20))
         else:
             user.reputation_score = 0
 
         self.db.add(user)
-        self.db.commit()
-        self.db.refresh(user)
+        await self.db.commit()
+        await self.db.refresh(user)
         return user.reputation_score
