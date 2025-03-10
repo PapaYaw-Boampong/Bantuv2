@@ -9,21 +9,19 @@ from user import User
 
 class EventType(str, PyEnum):
     TRANSCRIPTION_CHALLENGE = "transcription_challenge"
-    TRANSLATION_SPRINT = "translation_sprint"
+    TRANSLATION_SPRINT = "translation_challenge"
     CORRECTION_MARATHON = "correction_marathon"
 
 
 # ===================== EVENTS TABLE =====================
-class Event(SQLModel, table=True):
-    __tablename__ = "events"
-
+class Challenge(SQLModel, table=True):
     id: str = Field(
         default_factory=lambda: str(uuid.uuid4()),
         primary_key=True,
         index=True
     )
 
-    event_name: str
+    challenge_name: str
     description: Optional[str] = None
     EventType: EventType
     start_date: datetime
@@ -39,11 +37,11 @@ class Event(SQLModel, table=True):
     contribution_count: int = Field(default=0)
 
     # Relationship
-    participants: List["EventParticipation"] = Relationship(back_populates="event")
+    participants: List["ChallengeParticipation"] = Relationship(back_populates="event")
 
 
 # ===================== EVENT PARTICIPATION TABLE =====================
-class EventParticipation(SQLModel, table=True):
+class ChallengeParticipation(SQLModel, table=True):
     id: str = Field(
         default_factory=lambda: str(uuid.uuid4()),
         primary_key=True,
@@ -58,6 +56,7 @@ class EventParticipation(SQLModel, table=True):
     total_sentences_translated: int = Field(default=0)
     total_tokens_produced: int = Field(default=0)
     total_points: int = Field(default=0)
+    acceptance_rate: float = Field(default=0.0)
 
     # Metadata
     created_at: datetime = Field(default_factory=datetime.utcnow)
@@ -65,4 +64,4 @@ class EventParticipation(SQLModel, table=True):
 
     # Relationships
     user: "User" = Relationship(back_populates="events")
-    event: "Event" = Relationship(back_populates="participants")
+    event: "Challenge" = Relationship(back_populates="participants")

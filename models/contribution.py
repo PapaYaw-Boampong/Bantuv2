@@ -21,6 +21,8 @@ class TranscriptionContribution(SQLModel, table=True):
     flagged: bool = Field(default=False)
     active: bool = Field(default=True)
 
+    frequency: int = Field(default=1)  # Number of times this contribution has been made
+
     # Relationships
     user: "User" = Relationship(back_populates="transcription_contributions")
     transcription_sample: "TranscriptionSample" = Relationship(back_populates="transcription_contributions")
@@ -34,12 +36,14 @@ class TranslationContribution(SQLModel, table=True):
 
     created_at: datetime = Field(default_factory=datetime.utcnow)
     active: bool = Field(default=True)
+    frequency: int = Field(default=1)  # Number of times this contribution has been made
 
     # Relationships
     user: "User" = Relationship(back_populates="translation_contributions")
     translation_sample: "TranslationSample" = Relationship(back_populates="translation_contributions")
 
 
+# ===================== CIRCULATION RECORDS TABLES =====================
 class TranscriptionCirculationRecord(SQLModel, table=True):
     """Records when a transcription contribution is shown to a user for evaluation"""
     id: uuid.UUID = Field(

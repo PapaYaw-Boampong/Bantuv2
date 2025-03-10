@@ -4,8 +4,8 @@ from sqlmodel import SQLModel, Field, Relationship
 from typing import Optional, List
 from datetime import datetime
 
-from contribution import Contribution  # Importing related models
-from event import EventParticipation
+from contribution import TranslationContribution, TranscriptionContribution  # Importing related models
+from challenge import ChallengeParticipation
 from language import UserLanguage
 
 
@@ -38,8 +38,9 @@ class User(SQLModel, table=True):
     total_points: int = Field(default=0)
 
     # Relationships
-    contributions: List["Contribution"] = Relationship(back_populates="user")
-    events: List["EventParticipation"] = Relationship(back_populates="user")
+    transcription_contributions: List["TranscriptionContribution"] = Relationship(back_populates="user")
+    translation_contributions: List["TranslationContribution"] = Relationship(back_populates="user")
+    events: List["ChallengeParticipation"] = Relationship(back_populates="user")
     user_languages: List["UserLanguage"] = Relationship(back_populates="user")
 
 
