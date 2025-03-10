@@ -1,6 +1,7 @@
 import uuid
 from sqlmodel import SQLModel, Field, Relationship
 from datetime import datetime
+
 from models.user import User
 from models.data_store import TranscriptionSample, TranslationSample
 from models.language import Language
@@ -41,8 +42,6 @@ class TranslationContribution(SQLModel, table=True):
 
 class TranscriptionCirculationRecord(SQLModel, table=True):
     """Records when a transcription contribution is shown to a user for evaluation"""
-    __tablename__ = "transcription_circulation_records"
-
     id: uuid.UUID = Field(
         default_factory=uuid.uuid4,
         primary_key=True,
@@ -66,8 +65,6 @@ class TranscriptionCirculationRecord(SQLModel, table=True):
 
 class TranslationCirculationRecord(SQLModel, table=True):
     """Records when a translation contribution is shown to a user for evaluation"""
-    __tablename__ = "translation_circulation_records"
-
     id: uuid.UUID = Field(
         default_factory=uuid.uuid4,
         primary_key=True,
