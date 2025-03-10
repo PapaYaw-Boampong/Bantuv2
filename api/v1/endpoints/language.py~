@@ -1,5 +1,5 @@
 from typing import Any, List
-from fastapi import APIRouter, Depends, Query, Path
+from fastapi import APIRouter, Depends, HTTPException, Query, Path
 from sqlalchemy.ext.asyncio import AsyncSession
 from starlette import status
 
@@ -8,13 +8,16 @@ from schemas.language import (
     LanguageCreate,
     LanguageUpdate,
     LanguageRead,
+    LanguageReadDetailed,
     UserLanguageCreate,
     UserLanguageRead,
+    UserLanguageUpdate
 )
 from services.language_service import LanguageService
 from api.v1.deps import get_current_user, get_current_superuser
 
 router = APIRouter()
+
 
 # -------------------- Language Routes --------------------
 
@@ -130,6 +133,22 @@ async def get_languages_by_user(
     return await language_service.get_user_languages(user_id)
 
 
+@router.put(
+    "/user-languages/{user_language_id}",
+    response_model=UserLanguageR,
+    summary="Update user-language relationship"
+)
+async def update_user_language(
+        db: AsyncSession = Depends(get_session),
+        user_language_id: str = Path(...),
+        user_language_in: UserLanguageUpdate,
+        current_user: dict = Depends(get_current_user)
+) -> Any:
+    """Update user-language relationship."""
+    language_service = LanguageService(db)
+    return await LanguageService.update_user_language(db, user_language_id, user_language_in)
+
+
 @router.delete(
     "/user-languages/{user_language_id}",
     status_code=status.HTTP_204_NO_CONTENT,
@@ -141,5 +160,4 @@ async def delete_user_language(
         current_user: dict = Depends(get_current_user)
 ) -> None:
     """Delete user-language relationship."""
-    language_service = LanguageService(db)
-    await language_service.remove_user_language(user_language_id)
+    await LanguageService.delete_user_language(db, user_language_id)
