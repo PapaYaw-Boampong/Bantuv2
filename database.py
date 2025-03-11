@@ -1,29 +1,36 @@
-import urllib.parse
-from sqlmodel import SQLModel, create_engine, Session
+from sqlmodel import SQLModel
+from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine, async_sessionmaker
+from sqlalchemy.orm import sessionmaker
 from core.config import settings
 
-# URL Encode the password to handle special characters
-encoded_password = urllib.parse.quote_plus(settings.DATABASE_PASSWORD)
 
-# Construct the DATABASE_URL
-DATABASE_URL = f"postgresql://{settings.DATABASE_USER}:{encoded_password}@{settings.DATABASE_HOST}:{settings.DATABASE_PORT}/{settings.DATABASE_NAME}"
+# Construct the async DATABASE_URL
+DATABASE_URL = settings.SQLALCHEMY_DATABASE_URI
 
-# Create database engine with connection pooling
-engine = create_engine(DATABASE_URL, echo=True, pool_size=10, max_overflow=20)
+# Create async database engine with connection pooling
+engine = create_async_engine(DATABASE_URL, echo=True, pool_size=10, max_overflow=20)
+
+# Async session factory
+async_session_maker = async_sessionmaker(
+    bind=engine,
+    class_=AsyncSession,
+    expire_on_commit=False  # Prevents auto-refresh of expired objects
+)
 
 
 # Dependency to get a database session
-def get_session():
-    """Yield a database session."""
-    with Session(engine) as session:
+async def get_session():
+    """Yield an asynchronous database session."""
+    async with async_session_maker() as session:
         yield session
 
 
-# Function to create tables
-def create_db_and_tables():
-    """Create database tables from SQLModel metadata."""
+# Function to create tables asynchronously
+async def create_db_and_tables():
+    """Create database tables asynchronously from SQLModel metadata."""
     try:
-        SQLModel.metadata.create_all(engine)
+        async with engine.begin() as conn:
+            await conn.run_sync(SQLModel.metadata.create_all)
         print("✅ Database tables created successfully!")
     except Exception as e:
         print(f"❌ Error creating database tables: {e}")
