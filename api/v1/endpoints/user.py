@@ -100,7 +100,7 @@ async def update_user(
     user_service = UserService(db)
     user = await user_service.update_user_profile(
         user_id=current_user.id,
-        update_data=user_in.dict(exclude_unset=True)
+        update_data=user_in.model_dump(exclude_unset=True)
     )
     return user
 
@@ -128,7 +128,8 @@ async def change_password(
 async def get_top_contributors(
         time_period: Optional[int] = None,
         limit: int = 10,
-        db: AsyncSession = Depends(get_session)
+        db: AsyncSession = Depends(get_session),
+        current_user: User = Depends(get_current_superuser)
 ) -> Any:
     """
     Get top contributors based on reputation score
@@ -146,6 +147,7 @@ async def get_top_contributors(
 async def get_user_by_id(
         user_id: str,
         db: AsyncSession = Depends(get_session),
+        current_user: User = Depends(get_current_active_user)
 ) -> Any:
     """
     Get user by ID (admin only)

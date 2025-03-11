@@ -1,6 +1,5 @@
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlmodel import select
-from sqlalchemy import desc
+from sqlmodel import select, desc
 from typing import List, Optional, Dict, Any
 from models.challenge import Challenge, ChallengeParticipation
 from models.user import User
@@ -73,7 +72,7 @@ class ChallengeCRUD:
     async def get_challenge_summary(self) -> List[Dict[str, Any]]:
         """Get summarized info for all challenges."""
         result = await self.db.execute(
-            select(
+            select([
                 Challenge.id,
                 Challenge.challenge_name,
                 Challenge.EventType,
@@ -82,7 +81,7 @@ class ChallengeCRUD:
                 Challenge.is_active,
                 Challenge.participant_count,
                 Challenge.contribution_count,
-            )
+            ])
         )
         challenges = result.all()
 
@@ -114,6 +113,7 @@ class ChallengeCRUD:
             .offset(skip)
             .limit(limit)
         )
+
         participants = result.all()
 
         return [

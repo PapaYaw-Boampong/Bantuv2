@@ -9,7 +9,7 @@ from database import get_session  # Import your session dependency
 # Dependency to get the current authenticated user
 async def get_current_user(
         db: AsyncSession = Depends(get_session),
-        token: str = Depends(decode_token)
+        token: dict = Depends(decode_token)
 ) -> User:
     """Retrieve the currently authenticated user using UserService."""
 

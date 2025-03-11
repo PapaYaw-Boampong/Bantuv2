@@ -2,7 +2,7 @@ from typing import Any, List
 from fastapi import APIRouter, Depends, Query, Path
 from sqlalchemy.ext.asyncio import AsyncSession
 from starlette import status
-
+from models.user import User
 from database import get_session
 from schemas.language import (
     LanguageCreate,
@@ -27,7 +27,7 @@ router = APIRouter()
 async def create_language(
         language_in: LanguageCreate,
         db: AsyncSession = Depends(get_session),
-        current_user: dict = Depends(get_current_superuser)
+        current_user: User = Depends(get_current_superuser)
 ) -> Any:
     language_service = LanguageService(db)
     """Create a new language"""
@@ -74,7 +74,7 @@ async def update_language(
         db: AsyncSession = Depends(get_session),
         language_id: str = Path(...),
 
-        current_user: dict = Depends(get_current_superuser)
+        current_user: User = Depends(get_current_superuser)
 ) -> Any:
     """Update a language (admin only)."""
     language_service = LanguageService(db)
@@ -89,7 +89,7 @@ async def update_language(
 async def delete_language(
         db: AsyncSession = Depends(get_session),
         language_id: str = Path(...),
-        current_user: dict = Depends(get_current_superuser)
+        current_user: User = Depends(get_current_superuser)
 ) -> None:
     """Delete a language (admin only)."""
     language_service = LanguageService(db)
@@ -107,7 +107,7 @@ async def delete_language(
 async def assign_language_to_user(
         user_language_in: UserLanguageCreate,
         db: AsyncSession = Depends(get_session),
-        current_user: dict = Depends(get_current_user)
+        current_user: User = Depends(get_current_user)
 ) -> Any:
     """Assign a language to a user."""
     language_service = LanguageService(db)
@@ -138,7 +138,7 @@ async def get_languages_by_user(
 async def delete_user_language(
         db: AsyncSession = Depends(get_session),
         user_language_id: str = Path(...),
-        current_user: dict = Depends(get_current_user)
+        current_user: User = Depends(get_current_user)
 ) -> None:
     """Delete user-language relationship."""
     language_service = LanguageService(db)

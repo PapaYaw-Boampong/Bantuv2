@@ -69,7 +69,8 @@ class ChallengeService:
     async def update_user_stats(self,
                                 challenge_id: str,
                                 user_id: str,
-                                stats_update: Dict[str, Any]) -> Dict[str, Any]:
+                                stats_update: Dict[str, Any],
+                                update_points: bool = False) -> Dict[str, Any]:
         """Update user statistics for a specific challenge."""
         # Find the participation record
         statement = select(ChallengeParticipation).where(
@@ -77,6 +78,10 @@ class ChallengeService:
             ChallengeParticipation.user_id == user_id
         )
         result = await self.db.exec(statement)
+
+        if update_points:
+            stats_update['total_points'] = self._calculate_points(result)
+
         participation = result.scalar_one_or_none()
 
         if not participation:
@@ -100,7 +105,8 @@ class ChallengeService:
         # Return updated user stats
         return await self.crud.get_user_challenge_stats(challenge_id, user_id)
 
-    def _calculate_points(self, participation: ChallengeParticipation) -> int:
+    @staticmethod
+    def _calculate_points(participation: ChallengeParticipation) -> int:
         """Calculate points based on user's contributions."""
         # Points calculation logic based on the type of challenge
         challenge_type = participation.event.EventType

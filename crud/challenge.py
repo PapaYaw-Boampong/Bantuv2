@@ -31,7 +31,7 @@ class ChallengeCRUD:
         """Get all challenges with pagination."""
         query = select(Challenge)
         if active_only:
-            query = query.where(Challenge.is_active == True)
+            query = query.where(Challenge.is_active)
         query = query.offset(skip).limit(limit)
         result = await self.db.execute(query)
         return list(result.scalars().all())
@@ -130,39 +130,8 @@ class ChallengeCRUD:
             for participation, user in participants
         ]
 
-    async def get_user_challenge_stats(
-            self, challenge_id: str, user_id: str
-    ) -> Optional[Dict[str, Any]]:
-        """Get stats for a specific user in a specific challenge."""
-        result = await self.db.execute(
-            select(ChallengeParticipation, User).where(
-                ChallengeParticipation.event_id == challenge_id,
-                ChallengeParticipation.user_id == user_id,
-                ChallengeParticipation.user_id == User.id,
-            )
-        )
-        participation_and_user = result.first()
-
-        if not participation_and_user:
-            return None
-
-        participation, user = participation_and_user
-
-        return {
-            "user_id": user.id,
-            "username": user.username,
-            "name": f"{user.first_name} {user.last_name}",
-            "points": participation.total_points,
-            "hours_speech": participation.total_hours_speech,
-            "sentences_translated": participation.total_sentences_translated,
-            "tokens_produced": participation.total_tokens_produced,
-            "acceptance_rate": participation.acceptance_rate,
-            "created_at": participation.created_at,
-            "updated_at": participation.updated_at,
-        }
-
     async def get_users_challenge_stats(
-            self, challenge_id: str, user_ids: List[str]
+            self, challenge_id: str, user_ids: List[str], limit: int = 1,
     ) -> List[Dict[str, Any]]:
         """Get stats for multiple users in a specific challenge."""
         result = await self.db.execute(
@@ -170,7 +139,7 @@ class ChallengeCRUD:
                 ChallengeParticipation.event_id == challenge_id,
                 ChallengeParticipation.user_id.in_(user_ids),
                 ChallengeParticipation.user_id == User.id,
-            )
+            ).limit(limit)
         )
         participants = result.all()
 
