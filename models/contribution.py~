@@ -43,6 +43,7 @@ class TranslationContribution(SQLModel, table=True):
     translation_sample: "TranslationSample" = Relationship(back_populates="translation_contributions")
 
 
+#
 # ===================== CIRCULATION RECORDS TABLES =====================
 class TranscriptionCirculationRecord(SQLModel, table=True):
     """Records when a transcription contribution is shown to a user for evaluation"""

@@ -1,0 +1,75 @@
+from typing import List, Optional
+from pydantic import BaseModel, Field
+from datetime import datetime
+
+
+# Base schemas
+class LanguageBase(BaseModel):
+    name: str = Field(..., min_length=2, max_length=100)
+    description: Optional[str] = Field(None, max_length=500)
+    code: str = Field(..., regex=r"^[a-z]{2,3}$", description="ISO 639-1 or ISO 639-3 language code")
+
+class UserLanguageBase(BaseModel):
+    user_id: str
+    language_id: str
+    total_hours_speech: Optional[int] = Field(0, ge=0, description="Total speech hours must be non-negative")
+    total_sentences_translated: Optional[int] = Field(0, ge=0, description="Total sentences translated must be non-negative")
+
+
+# Create schemas
+class LanguageCreate(LanguageBase):
+    pass
+
+
+class UserLanguageCreate(UserLanguageBase):
+    pass
+
+
+# Update schemas
+class LanguageUpdate(BaseModel):
+    name: Optional[str] = Field(None, min_length=2, max_length=100)
+    description: Optional[str] = Field(None, max_length=500)
+
+
+class UserLanguageUpdate(BaseModel):
+    total_hours_speech: Optional[int] = Field(None, ge=0)
+    total_sentences_translated: Optional[int] = Field(None, ge=0)
+
+
+# Read schemas
+class Language(LanguageBase):
+    id: str
+    contribution_count: int
+    contributor_count: int
+    created_at: datetime
+    updated_at: datetime
+
+    class Config:
+        orm_mode = True
+
+
+class UserLanguage(UserLanguageBase):
+    id: str
+    created_at: datetime
+    updated_at: datetime
+
+    class Config:
+        orm_mode = True
+
+
+# Response schemas
+class LanguageResponse(Language):
+    pass
+
+
+class UserLanguageResponse(UserLanguage):
+    pass
+
+
+# Extended response schemas (with relationships)
+class UserLanguageWithLanguage(UserLanguage):
+    language: Language
+
+
+class LanguageWithUserCount(Language):
+    user_count: int
