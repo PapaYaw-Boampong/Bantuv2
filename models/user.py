@@ -4,14 +4,16 @@ from sqlmodel import SQLModel, Field, Relationship
 from typing import Optional, List
 from datetime import datetime
 
-from contribution import TranslationContribution, TranscriptionContribution  # Importing related models
-from challenge import ChallengeParticipation
-from language import UserLanguage
+
+# from models.contribution import TranslationContribution, TranscriptionContribution
+# from models.challenge import ChallengeParticipation
+# from models.language import UserLanguage
 
 
 # ===================== USERS TABLE =====================
 class User(SQLModel, table=True):
-    id: str = Field(
+    __tablename__ = "user"
+    id:  uuid.UUID = Field(
         default_factory=lambda: str(uuid.uuid4()),
         primary_key=True,
         index=True
@@ -22,7 +24,10 @@ class User(SQLModel, table=True):
     hashed_password: str
 
     is_active: bool = Field(default=True)
-    is_superuser: bool = Field(default=False)
+    recently_active: bool = Field(default=True)  # active within the last 10 days
+    role: int = Field(default=1)  # 1: user, 2: admin, 3: superadmin
+
+    # Timestamps
     created_at: datetime = Field(default_factory=datetime.utcnow)
     updated_at: datetime = Field(default_factory=datetime.utcnow)
 
@@ -40,7 +45,9 @@ class User(SQLModel, table=True):
     # Relationships
     transcription_contributions: List["TranscriptionContribution"] = Relationship(back_populates="user")
     translation_contributions: List["TranslationContribution"] = Relationship(back_populates="user")
+
+    transcription_circulation_records: List["TranscriptionCirculationRecord"] = Relationship(back_populates="user")
+    translation_circulation_records: List["TranslationCirculationRecord"] = Relationship(back_populates="user")
+
     events: List["ChallengeParticipation"] = Relationship(back_populates="user")
     user_languages: List["UserLanguage"] = Relationship(back_populates="user")
-
-

@@ -2,13 +2,16 @@ import uuid
 
 from sqlmodel import SQLModel, Field, Relationship
 from typing import List, Optional
-from user import User
-from contribution import TranscriptionContribution, TranslationContribution
 
+
+# from models.user import User
+# from models.contribution import TranscriptionContribution, TranslationContribution
+#
 
 # ===================== LANGUAGES TABLE =====================
 class Language(SQLModel, table=True):
-    id: str = Field(
+    __tablename__ = "language"
+    id: uuid.UUID = Field(
         default_factory=lambda: str(uuid.uuid4()),
         primary_key=True,
         index=True
@@ -25,21 +28,21 @@ class Language(SQLModel, table=True):
     contributor_count: int = Field(default=0)
 
     # Relationships
-    transcription_contributions: List["TranscriptionContribution"] = Relationship(back_populates="language")
-    translation_contributions: List["TranslationContribution"] = Relationship(back_populates="language")
     user_languages: List["UserLanguage"] = Relationship(back_populates="language")
+
+    transcriptions: List["TranscriptionSample"] = Relationship(back_populates="language")
+
+    translations: List["TranslationSample"] = Relationship(back_populates="language")
 
 
 class UserLanguage(SQLModel, table=True):
-    id: str = Field(default_factory=lambda: str(uuid.uuid4()), primary_key=True, index=True)
-    user_id: str = Field(foreign_key="user.id")
-    language_id: str = Field(foreign_key="language.id")
+    __tablename__ = "user_language"
+    id: uuid.UUID = Field(default_factory=lambda: str(uuid.uuid4()), primary_key=True, index=True)
+    user_id: uuid.UUID = Field(foreign_key="user.id")
+    language_id: uuid.UUID = Field(foreign_key="language.id")
     total_hours_speech: Optional[int] = 0
     total_sentences_translated: Optional[int] = 0
 
     # Relationships
     user: "User" = Relationship(back_populates="user_languages")
     language: "Language" = Relationship(back_populates="user_languages")
-
-
-

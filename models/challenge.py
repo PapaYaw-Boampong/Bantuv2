@@ -4,7 +4,7 @@ from sqlmodel import SQLModel, Field, Relationship
 from typing import Optional, List
 from datetime import datetime
 from enum import Enum as PyEnum
-from user import User
+# from models.user import User
 
 
 class EventType(str, PyEnum):
@@ -15,7 +15,7 @@ class EventType(str, PyEnum):
 
 # ===================== EVENTS TABLE =====================
 class Challenge(SQLModel, table=True):
-    id: str = Field(
+    id: uuid.UUID = Field(
         default_factory=lambda: str(uuid.uuid4()),
         primary_key=True,
         index=True
@@ -42,14 +42,14 @@ class Challenge(SQLModel, table=True):
 
 # ===================== EVENT PARTICIPATION TABLE =====================
 class ChallengeParticipation(SQLModel, table=True):
-    id: str = Field(
+    id: uuid.UUID = Field(
         default_factory=lambda: str(uuid.uuid4()),
         primary_key=True,
         index=True
     )
 
-    event_id: str = Field(foreign_key="event.id")
-    user_id: str = Field(foreign_key="user.id")
+    event_id:  uuid.UUID = Field(foreign_key="challenge.id")
+    user_id:  uuid.UUID = Field(foreign_key="user.id")
 
     # Statistics
     total_hours_speech: int = Field(default=0)
