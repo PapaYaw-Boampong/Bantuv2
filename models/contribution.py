@@ -2,20 +2,17 @@ import uuid
 from sqlmodel import SQLModel, Field, Relationship
 from datetime import datetime
 
-from models.user import User
-from models.data_store import TranscriptionSample, TranslationSample
-from models.language import Language
 
-
-# ===================== TRANSCRIPTION CONTRIBUTION TABLE =====================
+# ===================== TRANSCRIPTION CONTRIBUTION TABLE ===============
 class TranscriptionContribution(SQLModel, table=True):
-    id: str = Field(
+    __tablename__ = "transcription_contribution"
+    id:  uuid.UUID = Field(
         default_factory=lambda: str(uuid.uuid4()),
         primary_key=True,
         index=True
     )
-    user_id: str = Field(foreign_key="user.id")
-    transcription_sample_id: str = Field(foreign_key="transcription_sample.id")
+    user_id: uuid.UUID = Field(foreign_key="user.id")
+    transcription_sample_id: uuid.UUID = Field(foreign_key="transcription_sample.id")
 
     created_at: datetime = Field(default_factory=datetime.utcnow)
     flagged: bool = Field(default=False)
@@ -25,22 +22,32 @@ class TranscriptionContribution(SQLModel, table=True):
 
     # Relationships
     user: "User" = Relationship(back_populates="transcription_contributions")
-    transcription_sample: "TranscriptionSample" = Relationship(back_populates="transcription_contributions")
+
+    transcription_sample: "TranscriptionSample" = Relationship(back_populates="contributions")
+
+    transcription_circulation_records: list["TranscriptionCirculationRecord"] = Relationship(
+        back_populates="transcription_contribution"
+    )
 
 
-# ===================== TRANSLATION CONTRIBUTION TABLE =====================
+# ===================== TRANSLATION CONTRIBUTION TABLE =================
 class TranslationContribution(SQLModel, table=True):
-    id: str = Field(default_factory=lambda: str(uuid.uuid4()), primary_key=True, index=True)
-    user_id: str = Field(foreign_key="user.id")
-    translation_sample_id: str = Field(foreign_key="translation_sample.id")
+    __tablename__ = "translation_contribution"
+    id: uuid.UUID = Field(default_factory=lambda: str(uuid.uuid4()), primary_key=True, index=True)
+    user_id: uuid.UUID = Field(foreign_key="user.id")
+    translation_sample_id: uuid.UUID = Field(foreign_key="translation_sample.id")
 
     created_at: datetime = Field(default_factory=datetime.utcnow)
     active: bool = Field(default=True)
-    frequency: int = Field(default=1)  # Number of times this contribution has been made
 
     # Relationships
     user: "User" = Relationship(back_populates="translation_contributions")
-    translation_sample: "TranslationSample" = Relationship(back_populates="translation_contributions")
+    translation_sample: "TranslationSample" = Relationship(back_populates="contributions")
+
+    # ✅ Added Relationship for Circulation Records
+    translation_circulation_records: list["TranslationCirculationRecord"] = Relationship(
+        back_populates="translation_contribution"
+    )
 
 
 # ===================== CIRCULATION RECORDS TABLES =====================
@@ -52,8 +59,8 @@ class TranscriptionCirculationRecord(SQLModel, table=True):
         index=True,
         nullable=False
     )
-    transcription_contribution_id: uuid.UUID = Field(foreign_key="transcription_contributions.id")
-    user_id: uuid.UUID = Field(foreign_key="users.id")
+    transcription_contribution_id: uuid.UUID = Field(foreign_key="transcription_contribution.id")
+    user_id: uuid.UUID = Field(foreign_key="user.id")
     shown_at: datetime = Field(default_factory=datetime.utcnow)
 
     # Has the user taken action on this contribution?
@@ -75,8 +82,8 @@ class TranslationCirculationRecord(SQLModel, table=True):
         index=True,
         nullable=False
     )
-    translation_contribution_id: uuid.UUID = Field(foreign_key="translation_contributions.id")
-    user_id: uuid.UUID = Field(foreign_key="users.id")
+    translation_contribution_id: uuid.UUID = Field(foreign_key="translation_contribution.id")
+    user_id: uuid.UUID = Field(foreign_key="user.id")
     shown_at: datetime = Field(default_factory=datetime.utcnow)
 
     # Has the user taken action on this contribution?
