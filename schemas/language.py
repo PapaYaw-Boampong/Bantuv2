@@ -1,4 +1,4 @@
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict
 from typing import List, Optional, Dict, Any
 
 
@@ -22,14 +22,13 @@ class LanguageUpdate(BaseModel):
 
 class LanguageRead(LanguageBase):
     id: str
-    contribution_count: int
-    contributor_count: int
 
-    class Config:
-        orm_mode = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class LanguageReadDetailed(LanguageRead):
+    contribution_count: int
+    contributor_count: int
     contributions: List[Dict[str, Any]] = []
     user_languages: List[Dict[str, Any]] = []
 
@@ -37,14 +36,18 @@ class LanguageReadDetailed(LanguageRead):
 # ===================== USER LANGUAGE SCHEMAS =====================
 
 class UserLanguageBase(BaseModel):
-    user_id: str
     language_id: str
     total_hours_speech: Optional[int] = 0
     total_sentences_translated: Optional[int] = 0
 
 
-class UserLanguageCreate(UserLanguageBase):
-    pass
+class UserLanguageCreate(BaseModel):
+    language_id: str
+    proficiency: Optional[str] = "Beginner"
+    total_hours_speech: Optional[int] = 0
+    total_sentences_translated: Optional[int] = 0
+
+    model_config = ConfigDict(from_attributes=True)
 
 
 class UserLanguageUpdate(BaseModel):
@@ -52,8 +55,23 @@ class UserLanguageUpdate(BaseModel):
     total_sentences_translated: Optional[int] = None
 
 
-class UserLanguageRead(UserLanguageBase):
-    id: str
+# class UserLanguageRead(UserLanguageBase):
+#     id: str
+#
+#     class Config:
+#         orm_mode = True
 
-    class Config:
-        orm_mode = True
+
+class LanguageSchema(BaseModel):
+    id: str
+    name: str
+    code: Optional[str] = None  # `code` is optional since you check for it
+    description: Optional[str] = None
+
+
+class UserLanguageRead(BaseModel):
+    association_id: str  # UserLanguage ID
+    proficiency: str
+    language: LanguageSchema  # Nested language details
+
+    model_config = ConfigDict(from_attributes=True)

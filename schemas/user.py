@@ -1,18 +1,6 @@
-# app/schemas/user.py
 from typing import Optional, List
-from pydantic import BaseModel, EmailStr, Field, field_validator
+from pydantic import BaseModel, EmailStr, Field, field_validator, UUID4, ConfigDict
 from datetime import datetime
-import uuid
-
-
-# Token schema for authentication
-class Token(BaseModel):
-    access_token: str
-    token_type: str
-
-
-class TokenPayload(BaseModel):
-    sub: Optional[str] = None
 
 
 # Base User schema with common attributes
@@ -20,11 +8,14 @@ class UserBase(BaseModel):
     username: Optional[str] = None
     email: Optional[EmailStr] = None
     is_active: Optional[bool] = True
+    fullname: Optional[str] = None
 
 
 # Schema for user creation
 class UserCreate(BaseModel):
     username: str
+    fullname: str
+    country: str
     email: EmailStr
     password: str
 
@@ -76,10 +67,11 @@ class UserCreate(BaseModel):
 # Schema for user update
 class UserUpdate(BaseModel):
     username: Optional[str] = None
+    fullname: Optional[str] = None
+    country: Optional[str] = None
     email: Optional[EmailStr] = None
 
-    class Config:
-        extra = "forbid"  # Prevents additional fields
+    model_config = ConfigDict(from_attributes=True, extra='forbid')
 
 
 # Schema for changing password
@@ -94,18 +86,23 @@ class ChangePasswordRequest(BaseModel):
         return v
 
 
+class ChangePasswordResponse(BaseModel):
+    success: bool
+
+
 # Base response schema for User
 class UserResponse(BaseModel):
     id: str
     username: str
+    fullname: str
     email: str
+    country: str
     is_active: bool
-    is_superuser: bool
+    role: int
     created_at: datetime
     updated_at: datetime
 
-    class Config:
-        orm_mode = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 # Extended response schema for User profile
@@ -118,6 +115,10 @@ class UserProfileResponse(UserResponse):
     total_tokens_produced: int
     total_points: int
     acceptance_rate: Optional[float] = None
+    country: str = None
+    milestones: List[str] = []  # List of milestone IDs
+    bounties_claimed: List[str] = []  # List of bounty IDs
+    challenge_rewards: List[str] = []  # List of challenge reward IDs
 
 
 # Schema for top contributors response
@@ -129,5 +130,34 @@ class TopContributorResponse(BaseModel):
     accepted_contributions: int
     total_points: int
 
-    class Config:
-        orm_mode = True
+    model_config = ConfigDict(from_attributes=True)
+
+
+# User Statistics Update Schema
+class UserStatisticsUpdate(BaseModel):
+    translation_contribution_count: Optional[int] = None
+    translation_accepted_contributions: Optional[int] = None
+    translation_reputation_score: Optional[float] = None
+    transcription_contribution_count: Optional[int] = None
+    transcription_accepted_contributions: Optional[int] = None
+    transcription_reputation_score: Optional[float] = None
+    total_hours_speech: Optional[int] = None
+    total_sentences_translated: Optional[int] = None
+    total_tokens_produced: Optional[int] = None
+
+
+# User Statistics Response Schema
+class UserStatisticsResponse(BaseModel):
+    user_id: str
+    translation_contribution_count: int
+    translation_accepted_contributions: int
+    translation_reputation_score: float
+    transcription_contribution_count: int
+    transcription_accepted_contributions: int
+    transcription_reputation_score: float
+    total_hours_speech: int
+    total_sentences_translated: int
+    total_tokens_produced: int
+    updated_at: datetime
+
+    model_config = ConfigDict(from_attributes=True)

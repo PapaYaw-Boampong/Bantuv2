@@ -1,5 +1,6 @@
 from typing import List, Optional, Dict, Any
 from sqlmodel import select
+from sqlalchemy.orm import joinedload
 from models.language import Language, UserLanguage
 from sqlalchemy.ext.asyncio import AsyncSession
 from datetime import datetime
@@ -100,15 +101,10 @@ class UserLanguageCrud:
         """
         Get a user-language relationship by ID (ASYNC)
         """
-        return await self.db.get(UserLanguage, user_language_id)
-
-    async def get_by_user_and_language(self, user_id: str, language_id: str) -> Optional[UserLanguage]:
-        """
-        Get user-language relationship by user ID and language ID (ASYNC)
-        """
-        statement = select(UserLanguage).where(
-            UserLanguage.user_id == user_id,
-            UserLanguage.language_id == language_id
+        statement = (
+            select(UserLanguage)
+            .options(joinedload(UserLanguage.language))  # Join Language table
+            .where(UserLanguage.id == user_language_id)
         )
         result = await self.db.execute(statement)
         return result.scalars().first()
@@ -117,7 +113,13 @@ class UserLanguageCrud:
         """
         Get all languages associated with a user (ASYNC)
         """
-        statement = select(UserLanguage).where(UserLanguage.user_id == user_id).offset(skip).limit(limit)
+        statement = (
+            select(UserLanguage)
+            .options(joinedload(UserLanguage.language))  # Join Language table
+            .where(UserLanguage.user_id == user_id)
+            .offset(skip)
+            .limit(limit)
+        )
         result = await self.db.execute(statement)
         return list(result.scalars().all())
 
@@ -128,22 +130,6 @@ class UserLanguageCrud:
         statement = select(UserLanguage).where(UserLanguage.language_id == language_id).offset(skip).limit(limit)
         result = await self.db.execute(statement)
         return list(result.scalars().all())
-
-    async def update(self, user_language_id: str, update_data: Dict[str, Any]) -> Optional[UserLanguage]:
-        """
-        Update a user-language relationship (ASYNC)
-        """
-        user_language = await self.get_by_id(user_language_id)
-        if not user_language:
-            return None
-
-        for key, value in update_data.items():
-            setattr(user_language, key, value)
-
-        self.db.add(user_language)
-        await self.db.commit()
-        await self.db.refresh(user_language)
-        return user_language
 
     async def delete(self, user_language_id: str) -> bool:
         """
@@ -157,16 +143,16 @@ class UserLanguageCrud:
         await self.db.commit()
         return True
 
-    async def update_speech_hours(self, user_id: str, language_id: str, hours: int) -> UserLanguage:
+    async def update_speech_hours(self, pair_id: str, hours: int) -> UserLanguage:
         """
         Update speech hours for a user-language relationship (ASYNC)
         """
-        user_language = await self.get_by_user_and_language(user_id, language_id)
+        user_language = await self.get_by_id(pair_id)
 
         if not user_language:
             user_language = await self.create({
-                "user_id": user_id,
-                "language_id": language_id,
+                "user_id": user_language.user_id,
+                "language_id": user_language.language_id,
                 "total_hours_speech": hours,
                 "total_sentences_translated": 0
             })
@@ -178,16 +164,16 @@ class UserLanguageCrud:
 
         return user_language
 
-    async def update_sentences_translated(self, user_id: str, language_id: str, sentences: int) -> UserLanguage:
+    async def update_sentences_translated(self, user_language_id: str, sentences: int) -> UserLanguage:
         """
         Update sentences translated for a user-language relationship (ASYNC)
         """
-        user_language = await self.get_by_user_and_language(user_id, language_id)
+        user_language = await self.get_by_id(user_language_id)
 
         if not user_language:
             user_language = await self.create({
-                "user_id": user_id,
-                "language_id": language_id,
+                "user_id": user_language.user_id,
+                "language_id": user_language.language_id,
                 "total_hours_speech": 0,
                 "total_sentences_translated": sentences
             })

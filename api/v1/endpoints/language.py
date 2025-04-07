@@ -12,14 +12,15 @@ from schemas.language import (
     UserLanguageRead,
 )
 from services.language_service import LanguageService
-from api.v1.deps import get_current_user, get_current_superuser
+from api.v1.deps import get_current_active_user, get_current_superuser
 
 router = APIRouter()
+
 
 # -------------------- Language Routes --------------------
 
 @router.post(
-    "/languages/",
+    "/languages",
     response_model=LanguageCreate,
     status_code=status.HTTP_201_CREATED,
     summary="Create a new language"
@@ -36,14 +37,15 @@ async def create_language(
 
 
 @router.get(
-    "/languages/",
+    "/languages",
     response_model=List[LanguageRead],
     summary="Get all languages"
 )
 async def read_languages(
         db: AsyncSession = Depends(get_session),
         skip: int = Query(0, ge=0),
-        limit: int = Query(100, ge=1, le=100)
+        limit: int = Query(100, ge=1, le=100),
+        current_user: User = Depends(get_current_active_user)
 ) -> Any:
     language_service = LanguageService(db)
     """Retrieve all languages with pagination."""
@@ -73,7 +75,6 @@ async def update_language(
         language_in: LanguageUpdate,
         db: AsyncSession = Depends(get_session),
         language_id: str = Path(...),
-
         current_user: User = Depends(get_current_superuser)
 ) -> Any:
     """Update a language (admin only)."""
@@ -99,35 +100,36 @@ async def delete_language(
 # -------------------- UserLanguage Routes --------------------
 
 @router.post(
-    "/user-languages/",
-    response_model=UserLanguageCreate,
+    "/user-languages/me",
+    response_model=UserLanguageRead,
     status_code=status.HTTP_201_CREATED,
     summary="Assign a language to a user"
 )
 async def assign_language_to_user(
         user_language_in: UserLanguageCreate,
         db: AsyncSession = Depends(get_session),
-        current_user: User = Depends(get_current_user)
+        current_user: User = Depends(get_current_active_user)
 ) -> Any:
     """Assign a language to a user."""
     language_service = LanguageService(db)
     return await language_service.add_user_language(
-        user_language_in.user_id,
-        user_language_in.language_id)
+        str(current_user.id),
+        user_language_in.language_id,
+        user_language_in.proficiency)
 
 
 @router.get(
-    "/user-languages/{user_id}",
+    "/user-languages/me",
     response_model=List[UserLanguageRead],
     summary="Get languages assigned to a user"
 )
 async def get_languages_by_user(
         db: AsyncSession = Depends(get_session),
-        user_id: str = Path(...)
+        current_user: User = Depends(get_current_active_user)
 ) -> Any:
     """Retrieve languages assigned to a specific user."""
     language_service = LanguageService(db)
-    return await language_service.get_user_languages(user_id)
+    return await language_service.get_user_languages(str(current_user.id))
 
 
 @router.delete(
@@ -138,7 +140,7 @@ async def get_languages_by_user(
 async def delete_user_language(
         db: AsyncSession = Depends(get_session),
         user_language_id: str = Path(...),
-        current_user: User = Depends(get_current_user)
+        current_user: User = Depends(get_current_active_user)
 ) -> None:
     """Delete user-language relationship."""
     language_service = LanguageService(db)

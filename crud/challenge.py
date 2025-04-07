@@ -11,12 +11,15 @@ class ChallengeCRUD:
 
     async def create_challenge(self, challenge_data: Dict[str, Any]) -> Challenge:
         """Create a new challenge."""
-        async with self.db.begin():
-            challenge = Challenge(**challenge_data)
-            self.db.add(challenge)
-            await self.db.flush()  # Ensures the object gets an ID before commit
-            await self.db.refresh(challenge)
-        return challenge
+        challenge = Challenge(**challenge_data)
+        self.db.add(challenge)
+        try:
+            await self.db.commit()  # Commit after adding
+            await self.db.refresh(challenge)  # Refresh to get updated data
+            return challenge
+        except Exception:
+            await self.db.rollback()  # Rollback if anything goes wrong
+            raise
 
     async def get_challenge(self, challenge_id: str) -> Optional[Challenge]:
         """Get a specific challenge by ID with all details."""
@@ -49,9 +52,12 @@ class ChallengeCRUD:
             for key, value in challenge_data.items():
                 setattr(challenge, key, value)
 
-            async with self.db.begin():
-                await self.db.flush()
+            try:
+                await self.db.commit()
                 await self.db.refresh(challenge)
+            except Exception:
+                await self.db.rollback()
+                raise
 
         return challenge
 
@@ -63,10 +69,13 @@ class ChallengeCRUD:
         challenge = result.scalar_one_or_none()
 
         if challenge:
-            async with self.db.begin():
-                await self.db.delete(challenge)
-                await self.db.flush()
-            return True
+            await self.db.delete(challenge)
+            try:
+                await self.db.commit()
+                return True
+            except Exception:
+                await self.db.rollback()
+                raise
         return False
 
     async def get_challenge_summary(self) -> List[Dict[str, Any]]:
@@ -178,8 +187,13 @@ class ChallengeCRUD:
         challenge.participant_count = len(participants)
         challenge.contribution_count = sum(p.total_sentences_translated for p in participants)
 
-        async with self.db.begin():
-            await self.db.flush()
+        try:
+            await self.db.commit()
             await self.db.refresh(challenge)
+        except Exception:
+            await self.db.rollback()
+            raise
 
         return challenge
+
+

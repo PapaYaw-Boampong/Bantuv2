@@ -24,10 +24,11 @@ class Settings(BaseModel):
     ]
 
     # Security settings
-    SECRET_KEY: str = os.getenv("SECRET_KEY", "")
-    ALGORITHM: str = os.getenv("JWT_ALGORITHM", "HS256")
-    ACCESS_TOKEN_EXPIRE_MINUTES: int = int(os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES", "30"))
-    REFRESH_TOKEN_EXPIRE_DAYS: int = int(os.getenv("REFRESH_TOKEN_EXPIRE_DAYS", "7"))
+    JWT_ALGORITHM: str = os.getenv("JWT_ALGORITHM", "HS256")
+    ACCESS_TOKEN_EXPIRE_MINUTES: int = int(os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES", "15"))
+    REFRESH_TOKEN_EXPIRE_DAYS: int = int(os.getenv("REFRESH_TOKEN_EXPIRE_DAYS", "5"))
+    ACCESS_SECRET_KEY: str = os.getenv("ACCESS_SECRET_KEY", "your_default_secret_key")
+    REFRESH_SECRET_KEY : str = os.getenv("REFRESH_SECRET_KEY", "your_other_default_refresh_secret_key")
 
     # Admin user
     FIRST_SUPERUSER: Optional[str] = os.getenv("FIRST_SUPERUSER", "admin@bantu.com")
@@ -50,25 +51,6 @@ class Settings(BaseModel):
 
     # Logging
     LOG_LEVEL: str = os.getenv("LOG_LEVEL", "INFO")
-
-    # @field_validator("SQLALCHEMY_DATABASE_URI", mode="before")
-    # def assemble_db_connection(cls, v: Optional[str], values: Dict[str, Any]) -> Any:
-    #     if isinstance(v, str):
-    #
-    #         return v
-    #     print("here")
-    #     # URL Encode the password to handle special characters
-    #     encoded_password = urllib.parse.quote_plus(values.get("POSTGRES_PASSWORD"))
-    #     return str(
-    #         PostgresDsn.build(
-    #             scheme="postgresql+asyncpg",
-    #             username=values.get("POSTGRES_USER"),
-    #             password=encoded_password,
-    #             host=values.get("POSTGRES_HOST"),
-    #             port=values.get("POSTGRES_PORT"),
-    #             path=f"/{values.get('POSTGRES_DB') or ''}",
-    #         )
-    #     )
 
     # Computed SQLAlchemy Database URI
     @computed_field

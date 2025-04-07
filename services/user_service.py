@@ -3,7 +3,7 @@ from fastapi import HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 from crud.user import UserCrud
 from models.user import User
-from core.security import get_password_hash, verify_password
+from services.token_service import TokenService, verify_password, get_password_hash
 
 
 class UserService:
@@ -15,7 +15,9 @@ class UserService:
             self,
             username: str,
             email: str,
-            password: str
+            password: str,
+            fullname: str,
+            country: str
     ) -> User:
         """
         Register a new user with hashed password
@@ -26,8 +28,15 @@ class UserService:
         if await self.repository.get_by_email(email):
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Email already registered")
 
+        token_service = TokenService(self.db)
         hashed_password = get_password_hash(password)
-        user_data = {"username": username, "email": email, "hashed_password": hashed_password}
+        user_data = {
+            "username": username,
+            "email": email,
+            "fullname": fullname,
+            "hashed_password": hashed_password,
+            "country": country
+        }
 
         return await self.repository.create(user_data)
 
@@ -62,11 +71,13 @@ class UserService:
         await self.repository.calculate_reputation_score(user_id)
 
         return {
-            "id": user.id,
+            "id": str(user.id),
             "username": user.username,
+            "fullname": user.fullname,
             "email": user.email,
             "is_active": user.is_active,
-            "is_superuser": user.is_superuser,
+            "role": user.role,
+            "updated_at": user.updated_at,
             "created_at": user.created_at,
             "contribution_count": user.contribution_count,
             "accepted_contributions": user.accepted_contributions,
@@ -75,7 +86,8 @@ class UserService:
             "total_sentences_translated": user.total_sentences_translated,
             "total_tokens_produced": user.total_tokens_produced,
             "total_points": user.total_points,
-            "acceptance_rate": (user.accepted_contributions / user.contribution_count if user.contribution_count > 0 else 0) * 100,
+            "acceptance_rate": (
+                                   user.accepted_contributions / user.contribution_count if user.contribution_count > 0 else 0) * 100,
         }
 
     async def get_user_by_id(self, user_id: str) -> Optional[User]:
@@ -92,7 +104,7 @@ class UserService:
         """
         Update a user's profile
         """
-        protected_fields = ['id', 'hashed_password', 'is_superuser', 'created_at', 'reputation_score']
+        protected_fields = ['id', 'hashed_password', 'role', 'created_at', 'reputation_score']
         for field in protected_fields:
             update_data.pop(field, None)
 
@@ -117,6 +129,8 @@ class UserService:
 
         if not verify_password(current_password, user.hashed_password):
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Incorrect current password")
+
+        token_service = TokenService(self.db)
 
         hashed_new_password = get_password_hash(new_password)
         await self.repository.update(user_id, {"hashed_password": hashed_new_password})
@@ -148,7 +162,7 @@ class UserService:
         top_users = users[:limit]
 
         return [{
-            "id": user.id,
+            "id": str(user.id),
             "username": user.username,
             "reputation_score": user.reputation_score,
             "contribution_count": user.contribution_count,

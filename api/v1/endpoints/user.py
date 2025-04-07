@@ -1,7 +1,6 @@
 from typing import List, Optional, Dict, Any
 from fastapi import APIRouter, Depends, status
 from sqlalchemy.ext.asyncio import AsyncSession
-
 from api.v1.deps import get_current_active_user, get_current_superuser
 from database import get_session
 from services.user_service import UserService
@@ -16,7 +15,7 @@ from models.user import User
 router = APIRouter()
 
 
-@router.get("/user", response_model=UserProfileResponse)
+@router.get("/me", response_model=UserProfileResponse)
 async def get_user(
         db: AsyncSession = Depends(get_session),
         current_user: User = Depends(get_current_active_user)
@@ -25,11 +24,11 @@ async def get_user(
     Get current user profile
     """
     user_service = UserService(db)
-    profile = await user_service.get_user_profile(current_user.id)
+    profile = await user_service.get_user_profile(str(current_user.id))
     return profile
 
 
-@router.put("/user", response_model=UserResponse)
+@router.put("/me", response_model=UserResponse)
 async def update_user(
         *,
         db: AsyncSession = Depends(get_session),
@@ -41,10 +40,16 @@ async def update_user(
     """
     user_service = UserService(db)
     user = await user_service.update_user_profile(
-        user_id=current_user.id,
+        user_id=str(current_user.id),
         update_data=user_in.model_dump(exclude_unset=True)
     )
-    return user
+    # Convert UUID fields to str before returning
+    return {
+        **user.model_dump(),
+        "id": str(user.id),  # Ensure ID is a string
+        "created_at": user.created_at.isoformat(),  # If needed
+        "updated_at": user.updated_at.isoformat() if user.updated_at else None
+    }
 
 
 @router.get("/top-contributors", response_model=List[TopContributorResponse])
@@ -80,7 +85,20 @@ async def get_user_by_id(
     return profile
 
 
-@router.delete("/{user_id}", response_model=Dict[str, bool])
+@router.get("/users", response_model=UserProfileResponse)
+async def get_user_by_id(
+        db: AsyncSession = Depends(get_session),
+        current_user: User = Depends(get_current_superuser)
+) -> Any:
+    """
+    Get user by ID (Admin only)
+    """
+    user_service = UserService(db)
+    profile = await user_service.get_users
+    return profile
+
+
+@router.delete("/deactivate/{user_id}", response_model=Dict[str, bool])
 async def deactivate_user(
         user_id: str,
         db: AsyncSession = Depends(get_session),
