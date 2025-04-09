@@ -1,63 +1,151 @@
 from typing import List, Optional, Dict, Any, Tuple
 from datetime import datetime
 import uuid
+from fastapi import HTTPException
 from sqlmodel import select, and_, or_, desc
+from sqlalchemy.orm import selectinload
 from sqlalchemy.ext.asyncio import AsyncSession
 from models.challenge import (
     Challenge, ChallengeParticipation,
     ChallengeStatus, EventType, TaskType, EventCategory
 )
-from models.user import User, UserStatistics
+from models.user import User
+from crud.challenge import ChallengeRuleRepository
 from schemas.challenge import (
     ChallengeCreate, ChallengeUpdate, ChallengeParticipationCreate,
     ChallengeParticipationUpdate, GetChallenges
 )
 
 
+def _calculate_progress(challenge: Challenge) -> int:
+    """Determine completion percentage based on filled fields"""
+    progress = 0
+
+    if challenge.event_type:
+        progress += 20
+    if challenge.task_type:
+        progress += 10
+    if challenge.event_category:
+        progress += 10
+    if challenge.start_date and challenge.end_date:
+        progress += 20
+    if challenge.reward_id:
+        progress += 20
+    if challenge.language_id:
+        progress += 20
+
+    return progress  # Cap at 100%
+
+
+def _get_remaining_fields(challenge: Challenge) -> List[str]:
+    """Returns list of fields still needing completion"""
+    required = []
+    if not challenge.event_type:
+        required.append("event_type")
+    if not challenge.task_type:
+        required.append("task_type")
+    if not challenge.event_category:
+        required.append("event_category")
+    if not challenge.start_date:
+        required.append("start_date")
+    if not challenge.end_date:
+        required.append("end_date")
+    if not challenge.reward_id:
+        required.append("reward_id")
+    if not challenge.language_id:
+        required.append("language_id")
+    return required
+
+
 class ChallengeService:
     def __init__(self, db: AsyncSession):
         self.db = db
+        self.rule_repository = ChallengeRuleRepository(db)
 
     # Challenge methods
     async def create_challenge(self, challenge_data: ChallengeCreate) -> Challenge:
-        # Determine initial status based on dates
-        now = datetime.utcnow()
-        if challenge_data.start_date > now:
-            status = ChallengeStatus.UPCOMING
-        elif challenge_data.end_date < now:
-            status = ChallengeStatus.COMPLETED
-        else:
-            status = ChallengeStatus.ACTIVE
-
         challenge = Challenge(
             challenge_name=challenge_data.challenge_name,
             description=challenge_data.description,
-            event_type=challenge_data.event_type,
-            task_type=TaskType.TRANSCRIPTION if challenge_data.event_type == EventType.DATA_COLLECTION else TaskType.TRANSLATION,
-            event_category=EventCategory.COMPETITION,  # Default to competition
-            start_date=challenge_data.start_date,
-            end_date=challenge_data.end_date,
-            status=status,
+            status=ChallengeStatus.UPCOMING,
             is_public=True,
             is_published=False,
-            reward=challenge_data.reward
         )
         self.db.add(challenge)
         await self.db.commit()
         await self.db.refresh(challenge)
         return challenge
 
-    async def get_challenge(self, challenge_id: str) -> Optional[Challenge]:
-        return await self.db.get(Challenge, challenge_id)
+    async def update_progress(self, challenge_id: uuid.UUID, update_data: Dict[str, Any]) -> Optional[Challenge]:
+        """Update challenge and recalculate completion %"""
+        challenge = await self.get_challenge(str(challenge_id))
+        if not challenge:
+            return None
 
-    async def update_challenge(self, challenge_id: str, challenge_data: ChallengeUpdate) -> Optional[Challenge]:
+        # Apply updates
+        for key, value in update_data.items():
+            setattr(challenge, key, value)
+
+        # Recalculate progress
+        new_progress = _calculate_progress(challenge)
+        challenge.completion_percent = new_progress
+
+        # Update required fields
+        challenge.required_fields = _get_remaining_fields(challenge)
+
+        await self.db.commit()
+        await self.db.refresh(challenge)
+        return challenge
+
+    async def get_challenge(self, challenge_id: str) -> Optional[Challenge]:
+
+        result = await self.db.get(Challenge, challenge_id)
+        if not result:
+            raise HTTPException(status_code=404, detail="Challenge not found")
+        return result
+
+    async def is_published(self, challenge_id: str) -> bool:
+        challenge = await self.get_challenge(challenge_id)
+        if not challenge:
+            return False
+        return challenge.is_published
+
+    async def update_challenge(
+            self,
+            challenge_id: str,
+            challenge_data: ChallengeUpdate
+    ) -> Optional[Challenge]:
+        """Update challenge and its rules with proper error handling"""
         challenge = await self.get_challenge(challenge_id)
         if not challenge:
             return None
 
         update_data = challenge_data.model_dump(exclude_unset=True)
 
-        # If dates are being updated, recalculate status
+        # Handle rules updates first
+        if 'rules' in update_data and update_data['rules'] is not None:
+            try:
+                # Process new rules
+                for rule in update_data['rules'].get("new", []):
+                    await self.rule_repository.add_rule(challenge.id, rule)
+
+                # Process deleted rules
+                for rule in update_data['rules'].get("deleted", []):
+                    if 'id' in rule:  # Safety check
+                        await self.rule_repository.delete_rule(rule['id'])
+
+                # Process updated rules
+                for rule in update_data['rules'].get("updated", []):
+                    if 'id' in rule:  # Safety check
+                        await self.rule_repository.update_rule(rule['id'], rule)
+            except Exception as e:
+                await self.db.rollback()
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Failed to update rules: {str(e)}"
+                )
+
+        # Handle status updates if dates change
         if 'start_date' in update_data or 'end_date' in update_data:
             now = datetime.utcnow()
             start_date = update_data.get('start_date', challenge.start_date)
@@ -70,13 +158,21 @@ class ChallengeService:
             else:
                 update_data['status'] = ChallengeStatus.ACTIVE
 
+        # Update challenge fields
         for key, value in update_data.items():
-            setattr(challenge, key, value)
+            if key != 'rules':  # Skip rules as we've already processed them
+                setattr(challenge, key, value)
 
-        self.db.add(challenge)
-        await self.db.commit()
-        await self.db.refresh(challenge)
-        return challenge
+        try:
+            await self.db.commit()
+            await self.db.refresh(challenge)
+            return challenge
+        except Exception as e:
+            await self.db.rollback()
+            raise HTTPException(
+                status_code=400,
+                detail=f"Failed to update challenge: {str(e)}"
+            )
 
     async def delete_challenge(self, challenge_id: str) -> bool:
         challenge = await self.get_challenge(challenge_id)
@@ -120,10 +216,15 @@ class ChallengeService:
     async def publish_challenge(self, challenge_id: str) -> Optional[Challenge]:
         """Mark a challenge as published, making it visible to users"""
         challenge = await self.get_challenge(challenge_id)
-        if not challenge:
-            return None
+        if not challenge or challenge.completion_percent < 100:
+            raise ValueError("Cannot publish incomplete challenge")
 
         challenge.is_published = True
+
+        challenge.status = ChallengeStatus.ACTIVE if (
+                challenge.start_date <= datetime.utcnow() <= challenge.end_date
+        ) else ChallengeStatus.UPCOMING
+
         self.db.add(challenge)
         await self.db.commit()
         await self.db.refresh(challenge)
@@ -135,6 +236,8 @@ class ChallengeService:
         if not challenge:
             return None
 
+        if challenge.status == ChallengeStatus.ACTIVE:
+            raise ValueError("Cannot unpublish an active challenge")
         challenge.is_published = False
         self.db.add(challenge)
         await self.db.commit()
@@ -266,12 +369,48 @@ class ChallengeService:
         result = await self.db.execute(query)
         return list(result.scalars().all())
 
-    async def get_user_challenges(self, user_id: str, skip: int = 0, limit: int = 100
-                                  ) -> List[ChallengeParticipation]:
-        """Get all challenges a user is participating in"""
-        query = select(ChallengeParticipation).where(ChallengeParticipation.user_id == user_id)
-        query = query.offset(skip).limit(limit)
+    async def get_user_challenges(
+            self,
+            user_id: str,
+            skip: int = 0,
+            limit: int = 100,
+            *,
+            status: Optional[ChallengeStatus] = None,
+            include_challenge_details: bool = True
+    ) -> List[ChallengeParticipation]:
+        """Get all challenges a user is participating in with optional filtering
+
+        Args:
+            user_id: ID of the user
+            skip: Pagination offset
+            limit: Maximum number of results
+            status: Filter by challenge status
+            include_challenge_details: Whether to load full challenge data
+
+        Returns:
+            List of ChallengeParticipation records with related Challenge data
+        """
+        query = select(ChallengeParticipation).where(
+            ChallengeParticipation.user_id == user_id
+        )
+        if include_challenge_details:
+            query = query.options(
+                selectinload(ChallengeParticipation.challenge).options(
+                    selectinload(Challenge.language),  # Use the relationship attribute
+                    selectinload(Challenge.reward)  # Not the model class
+                )
+            )
+            if status:
+                query = query.join(Challenge).where(
+                    Challenge.status == status
+                )
+
+            query = query.order_by(
+                ChallengeParticipation.updated_at.desc()
+            ).offset(skip).limit(limit)
+
         result = await self.db.execute(query)
+
         return list(result.scalars().all())
 
     async def increment_challenge_contribution_count(self, event_id: str) -> Optional[Challenge]:

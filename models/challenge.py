@@ -6,7 +6,7 @@ from datetime import datetime
 from enum import Enum as PyEnum
 
 if TYPE_CHECKING:
-    from models import User, ChallengeReward
+    from models import User, ChallengeReward, Language
 
 
 class ChallengeStatus(str, PyEnum):
@@ -39,6 +39,9 @@ class Challenge(SQLModel, table=True):
         primary_key=True,
         index=True
     )
+    language_id: uuid.UUID = Field(foreign_key="language.id")
+
+    challenge_reward_id: uuid.UUID = Field(foreign_key="challenge_reward.id")
 
     challenge_name: str
     description: Optional[str] = None
@@ -52,18 +55,36 @@ class Challenge(SQLModel, table=True):
     is_public: bool = Field(default=True)
     is_published: bool = Field(default=False)
 
+    # Add progress tracking
+    completion_percent: int = Field(default=0)
+
     # Statistics
     participant_count: int = Field(default=0)
     contribution_count: int = Field(default=0)
 
     # Relationship
     participants: List["ChallengeParticipation"] = Relationship(
-        back_populates="event",
-        sa_relationship_kwargs={"cascade": "all, delete-orphan", "lazy": "selectin"}
+        back_populates="challenge",
+        sa_relationship_kwargs={"cascade": "all, delete", "lazy": "selectin"}
     )
 
-    rewards: "ChallengeReward" = Relationship(
-        back_populates="challenge", sa_relationship_kwargs={"cascade": "all, delete-orphan", "lazy": "selectin"}
+    reward: "ChallengeReward" = Relationship(
+        back_populates="challenge",
+        sa_relationship_kwargs={
+            "lazy": "selectin",
+        }
+    )
+
+    language: "Language" = Relationship(
+        back_populates="challenges", sa_relationship_kwargs={ "lazy": "selectin"}
+    )
+
+    rules: List["ChallengeRule"] = Relationship(
+        back_populates="challenge",
+        sa_relationship_kwargs={
+            "cascade": "all, delete-orphan",
+            "lazy": "selectin"
+        }
     )
 
 
@@ -84,7 +105,17 @@ class ChallengeParticipation(SQLModel, table=True):
     total_sentences_translated: int = Field(default=0)
     total_tokens_produced: int = Field(default=0)
     total_points: int = Field(default=0)
+
     acceptance_rate: float = Field(default=0.0)
+
+    # Reputation Metrics
+    contribution_count: int = Field(default=0)
+    accepted_contributions: int = Field(default=0)
+    contribution_acceptance_score: float = Field(default=0.0)
+
+    evaluation_count: int = Field(default=0)
+    accepted_evaluations: int = Field(default=0)
+    evaluation_acceptance_score: float = Field(default=0.0)
 
     # Metadata
     created_at: datetime = Field(default_factory=datetime.utcnow)
@@ -95,7 +126,35 @@ class ChallengeParticipation(SQLModel, table=True):
         back_populates="events",
         sa_relationship_kwargs={"lazy": "selectin"}
     )
-    event: "Challenge" = Relationship(
+    challenge: "Challenge" = Relationship(
         back_populates="participants",
         sa_relationship_kwargs={"lazy": "selectin"}
+    )
+
+
+class ChallengeRule(SQLModel, table=True):
+    __tablename__ = "challenge_rules"
+
+    id: uuid.UUID = Field(
+        default_factory=uuid.uuid4,
+        primary_key=True,
+        index=True
+    )
+    challenge_id: uuid.UUID = Field(
+        foreign_key="challenge.id",
+        index=True
+    )
+    rule_title: str = Field(max_length=100)
+    rule_description: str
+    is_required: bool = Field(default=True)
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+    updated_at: datetime = Field(default_factory=datetime.utcnow)
+
+    # Relationship
+    challenge: "Challenge" = Relationship(
+        back_populates="rules",
+        sa_relationship_kwargs={
+            "cascade": "all, delete",  # Critical for automatic deletion
+            "passive_deletes": True
+        }
     )

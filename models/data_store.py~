@@ -54,7 +54,7 @@ class TranscriptionSample(SQLModel, table=True):
     category: str = Field(default=None, nullable=True)  # e.g., "daily conversation", "technical", "medical"
     created_at: datetime = Field(default_factory=datetime.utcnow)
     active: bool = Field(default=False)  # Becomes True when it meets a threshold of upvotes
-
+    
     priority: int = Field(default=0)  # Priority for transcription, higher means more important
 
     # Relationships

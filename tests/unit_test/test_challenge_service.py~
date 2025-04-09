@@ -94,6 +94,7 @@ class TestChallengeService:
             start_date=future_date,
             end_date=end_date,
             reward=uuid.uuid4()
+
         )
 
         # Act

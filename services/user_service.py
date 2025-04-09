@@ -4,6 +4,26 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from crud.user import UserCrud
 from models.user import User
 from services.token_service import TokenService, verify_password, get_password_hash
+from sqlmodel import select
+
+
+async def get_user_profile(
+        user: User
+) -> Dict[str, Any]:
+    """
+    Get a user's profile with statistics
+    """
+
+    return {
+        "id": str(user.id),
+        "username": user.username,
+        "fullname": user.fullname,
+        "email": user.email,
+        "is_active": user.is_active,
+        "role": user.role,
+        "updated_at": user.updated_at,
+        "created_at": user.created_at
+    }
 
 
 class UserService:
@@ -57,44 +77,21 @@ class UserService:
 
         return user
 
-    async def get_user_profile(
-            self,
-            user_id: str
-    ) -> Dict[str, Any]:
-        """
-        Get a user's profile with statistics
-        """
-        user = await self.repository.get_by_id(user_id)
-        if not user:
-            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
-
-        await self.repository.calculate_reputation_score(user_id)
-
-        return {
-            "id": str(user.id),
-            "username": user.username,
-            "fullname": user.fullname,
-            "email": user.email,
-            "is_active": user.is_active,
-            "role": user.role,
-            "updated_at": user.updated_at,
-            "created_at": user.created_at,
-            "contribution_count": user.contribution_count,
-            "accepted_contributions": user.accepted_contributions,
-            "reputation_score": user.reputation_score,
-            "total_hours_speech": user.total_hours_speech,
-            "total_sentences_translated": user.total_sentences_translated,
-            "total_tokens_produced": user.total_tokens_produced,
-            "total_points": user.total_points,
-            "acceptance_rate": (
-                                   user.accepted_contributions / user.contribution_count if user.contribution_count > 0 else 0) * 100,
-        }
-
-    async def get_user_by_id(self, user_id: str) -> Optional[User]:
+    async def get_detailed_user_by_id(self, user_id: str) -> Optional[User]:
         """
         Retrieve a user by ID.
         """
-        return await self.repository.get_by_id(user_id)
+        statement = select(User).where(User.id == user_id)
+        result = await self.db.execute(statement)
+        return result.scalars().first()
+
+    async def get_all_profiles_detailed(self, skip: int = 0, limit: int = 100) -> List[User]:
+        """
+        Get all users with pagination (ASYNC)
+        """
+        statement = select(User).offset(skip).limit(limit)
+        results = await self.db.execute(statement)
+        return list(results.scalars().all())
 
     async def update_user_profile(
             self,
@@ -104,11 +101,11 @@ class UserService:
         """
         Update a user's profile
         """
-        protected_fields = ['id', 'hashed_password', 'role', 'created_at', 'reputation_score']
+        protected_fields = ['id', 'hashed_password', 'role', 'created_at']
         for field in protected_fields:
             update_data.pop(field, None)
 
-        user = await self.repository.update(user_id, update_data)
+        user = await self.repository.update_profile(user_id, update_data)
         if not user:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
 
@@ -116,24 +113,17 @@ class UserService:
 
     async def change_password(
             self,
-            user_id: str,
+            user: User,
             current_password: str,
             new_password: str
     ) -> bool:
         """
         Change a user's password
         """
-        user = await self.repository.get_by_id(user_id)
-        if not user:
-            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
-
         if not verify_password(current_password, user.hashed_password):
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Incorrect current password")
-
-        token_service = TokenService(self.db)
-
         hashed_new_password = get_password_hash(new_password)
-        await self.repository.update(user_id, {"hashed_password": hashed_new_password})
+        await self.repository.update_profile(str(user.id), {"hashed_password": hashed_new_password})
         return True
 
     async def deactivate_user(
@@ -143,56 +133,20 @@ class UserService:
         """
         Deactivate a user (soft delete)
         """
-        user = await self.repository.update(user_id, {"is_active": False})
+        user = await self.repository.update_profile(user_id, {"is_active": False})
         if not user:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
 
         return user
 
-    async def get_top_contributors(
-            self,
-            limit: int = 10,
-            time_period: Optional[int] = None,
-    ) -> List[Dict[str, Any]]:
+    async def delete(self, user_id: str) -> bool:
         """
-        Get top contributors based on reputation score
+        Delete a user (ASYNC)
         """
-        users = await self.repository.get_all(limit=100)
-        users.sort(key=lambda user: user.reputation_score, reverse=True)
-        top_users = users[:limit]
-
-        return [{
-            "id": str(user.id),
-            "username": user.username,
-            "reputation_score": user.reputation_score,
-            "contribution_count": user.contribution_count,
-            "accepted_contributions": user.accepted_contributions,
-            "total_points": user.total_points,
-        } for user in top_users]
-
-    async def record_contribution_activity(
-            self,
-            user_id: str,
-            is_accepted: bool = False,
-            hours_speech: int = 0,
-            sentences_translated: int = 0,
-            tokens_produced: int = 0,
-            points: int = 0
-    ) -> User:
-        """
-        Record a user's contribution activity and update their statistics
-        """
-        user = await self.repository.increment_contribution_stats(
-            user_id=user_id,
-            is_accepted=is_accepted,
-            hours_speech=hours_speech,
-            sentences_translated=sentences_translated,
-            tokens_produced=tokens_produced,
-            points=points
-        )
-
+        user = await self.get_detailed_user_by_id(user_id)
         if not user:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
 
-        await self.repository.calculate_reputation_score(user_id)
-        return user
+        await self.db.delete(user)
+        await self.db.commit()
+        return True

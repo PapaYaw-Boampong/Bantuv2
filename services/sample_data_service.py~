@@ -1,0 +1,319 @@
+import uuid
+from typing import List, Dict, Optional
+from datetime import datetime
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlmodel import select, func, and_, or_
+from models import (
+    TranscriptionSample,
+    TranslationSeedData,
+    TranslationSample,
+    AnnotationSeedData,
+    AnnotationSample,
+    Language
+)
+from schemas import (
+    TranscriptionSampleCreate,
+    TranslationSeedCreate,
+    TranslationSampleCreate,
+    AnnotationSeedCreate,
+    AnnotationSampleCreate
+)
+
+
+class SampleDataService:
+    def __init__(self, db: AsyncSession):
+        self.db = db
+
+    # --- Core Sample Management ---
+
+    async def _get_samples(
+            self,
+            model,
+            language_id: Optional[uuid.UUID] = None,
+            limit: int = 10,
+            priority_threshold: int = 0
+    ) -> List:
+        """Generic sample fetcher with priority-based selection"""
+        query = select(model).where(
+            and_(
+                model.active == True,
+                model.priority >= priority_threshold
+            )
+        )
+
+        if language_id:
+            query = query.where(model.language_id == language_id)
+
+        query = query.order_by(
+            model.priority.desc(),
+            func.random()  # For random distribution within priority levels
+        ).limit(limit)
+
+        result = await self.db.execute(query)
+        return list(result.scalars().all())
+
+    # --- Transcription Samples ---
+
+    async def create_transcription_sample(
+            self,
+            sample_data: TranscriptionSampleCreate
+    ) -> TranscriptionSample:
+        """Create a new transcription sample"""
+        sample = TranscriptionSample(**sample_data.model_dump())
+        self.db.add(sample)
+        await self.db.commit()
+        await self.db.refresh(sample)
+        return sample
+
+    async def get_transcription_samples(
+            self,
+            language_id: Optional[uuid.UUID] = None,
+            limit: int = 10,
+            priority_threshold: int = 0
+    ) -> List[TranscriptionSample]:
+        """Get transcription samples with priority-based selection"""
+        return await self._get_samples(
+            TranscriptionSample,
+            language_id,
+            limit,
+            priority_threshold
+        )
+
+    # --- Translation Samples ---
+
+    async def create_translation_seed(
+            self,
+            seed_data: TranslationSeedCreate
+    ) -> TranslationSeedData:
+        """Create new translation seed data"""
+        seed = TranslationSeedData(**seed_data.model_dump())
+        self.db.add(seed)
+        await self.db.commit()
+        await self.db.refresh(seed)
+        return seed
+
+    async def create_translation_sample(
+            self,
+            sample_data: TranslationSampleCreate
+    ) -> TranslationSample:
+        """Create a new translation sample"""
+        sample = TranslationSample(**sample_data.model_dump())
+        self.db.add(sample)
+        await self.db.commit()
+        await self.db.refresh(sample)
+        return sample
+
+    async def get_translation_samples(
+            self,
+            language_id: Optional[uuid.UUID] = None,
+            limit: int = 10,
+            priority_threshold: int = 0
+    ) -> List[TranslationSample]:
+        """Get translation samples with priority-based selection"""
+        return await self._get_samples(
+            TranslationSample,
+            language_id,
+            limit,
+            priority_threshold
+        )
+
+    # --- Annotation Samples ---
+
+    async def create_annotation_seed(
+            self,
+            seed_data: AnnotationSeedCreate
+    ) -> AnnotationSeedData:
+        """Create new annotation seed data"""
+        seed = AnnotationSeedData(**seed_data.model_dump())
+        self.db.add(seed)
+        await self.db.commit()
+        await self.db.refresh(seed)
+        return seed
+
+    async def create_annotation_sample(
+            self,
+            sample_data: AnnotationSampleCreate
+    ) -> AnnotationSample:
+        """Create a new annotation sample"""
+        sample = AnnotationSample(**sample_data.model_dump())
+        self.db.add(sample)
+        await self.db.commit()
+        await self.db.refresh(sample)
+        return sample
+
+    async def get_annotation_samples(
+            self,
+            language_id: Optional[uuid.UUID] = None,
+            limit: int = 10,
+            priority_threshold: int = 0
+    ) -> List[AnnotationSample]:
+        """Get annotation samples with priority-based selection"""
+        return await self._get_samples(
+            AnnotationSample,
+            language_id,
+            limit,
+            priority_threshold
+        )
+
+    # --- Bulk Operations ---
+
+    async def bulk_create_transcription_samples(
+            self,
+            samples: List[TranscriptionSampleCreate]
+    ) -> int:
+        """Bulk create transcription samples"""
+        count = 0
+        for sample_data in samples:
+            sample = TranscriptionSample(**sample_data.model_dump())
+            self.db.add(sample)
+            count += 1
+        await self.db.commit()
+        return count
+
+    async def bulk_create_translation_pairs(
+            self,
+            seed_data: TranslationSeedCreate,
+            translations: List[TranslationSampleCreate]
+    ) -> int:
+        """Create seed + multiple translations atomically"""
+        seed = await self.create_translation_seed(seed_data)
+        count = 0
+        for trans_data in translations:
+            trans_data.seed_data_id = seed.id
+            await self.create_translation_sample(trans_data)
+            count += 1
+        return count
+
+    # --- Priority Management ---
+
+    async def update_sample_priority(
+            self,
+            sample_id: uuid.UUID,
+            model_type: str,  # 'transcription', 'translation', or 'annotation'
+            priority: int
+    ) -> bool:
+        """Update priority of any sample type"""
+        models = {
+            'transcription': TranscriptionSample,
+            'translation': TranslationSample,
+            'annotation': AnnotationSample
+        }
+
+        model = models.get(model_type.lower())
+        if not model:
+            raise ValueError("Invalid model type")
+
+        result = await self.db.execute(
+            select(model).where(model.id == sample_id)
+        )
+        sample = result.scalar_one_or_none()
+
+        if sample:
+            sample.priority = priority
+            await self.db.commit()
+            return True
+        return False
+
+    # --- Custom Contributions ---
+
+    async def create_custom_contribution(
+            self,
+            language_id: uuid.UUID,
+            contribution_data: Dict,
+            contribution_type: str
+    ) -> Dict:
+        """
+        Handle completely custom contributions where users provide both
+        seed data and sample, associating it with their language
+        """
+        if contribution_type == 'transcription':
+            seed = TranscriptionSample(
+                language_id=language_id,
+                audio_urls=contribution_data['audio_urls'],
+                transcription_text=contribution_data['text'],
+                category=contribution_data.get('category'),
+                active=False  # Needs review before activation
+            )
+            self.db.add(seed)
+            await self.db.commit()
+            return {"type": "transcription", "id": seed.id}
+
+        elif contribution_type == 'translation':
+            # For translations, the "seed" is the original text
+            seed = TranslationSeedData(
+                original_text=contribution_data['original_text'],
+                category=contribution_data.get('category'),
+                active=False
+            )
+            self.db.add(seed)
+            await self.db.commit()
+
+            # Then create the translation sample
+            sample = TranslationSample(
+                seed_data_id=seed.id,
+                language_id=language_id,
+                translated_text=contribution_data['translated_text'],
+                active=False
+            )
+            self.db.add(sample)
+            await self.db.commit()
+            return {
+                "type": "translation",
+                "seed_id": seed.id,
+                "sample_id": sample.id
+            }
+
+        elif contribution_type == 'annotation':
+            seed = AnnotationSeedData(
+                image_url=contribution_data['image_url'],
+                annotation_text=contribution_data['seed_text'],
+                category=contribution_data.get('category'),
+                active=False
+            )
+            self.db.add(seed)
+            await self.db.commit()
+
+            sample = AnnotationSample(
+                seed_data_id=seed.id,
+                language_id=language_id,
+                annotation_result=contribution_data['annotations'],
+                active=False
+            )
+            self.db.add(sample)
+            await self.db.commit()
+            return {
+                "type": "annotation",
+                "seed_id": seed.id,
+                "sample_id": sample.id
+            }
+
+        raise ValueError("Invalid contribution type")
+
+    # --- Sample Activation ---
+
+    async def activate_sample(
+            self,
+            sample_id: uuid.UUID,
+            model_type: str
+    ) -> bool:
+        """Activate a sample after meeting quality thresholds"""
+        models = {
+            'transcription': TranscriptionSample,
+            'translation': TranslationSample,
+            'annotation': AnnotationSample
+        }
+
+        model = models.get(model_type.lower())
+        if not model:
+            raise ValueError("Invalid model type")
+
+        result = await self.db.execute(
+            select(model).where(model.id == sample_id)
+        )
+        sample = result.scalar_one_or_none()
+
+        if sample:
+            sample.active = True
+            await self.db.commit()
+            return True
+        return False

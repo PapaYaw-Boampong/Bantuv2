@@ -34,7 +34,7 @@ class AnnotationContribution(SQLModel, table=True):
     annotation_sample: "AnnotationSample" = Relationship(
         back_populates="annotation_contributions", sa_relationship_kwargs={"lazy": "selectin"}
     )
-    annotation_evaluation_records: List["AnnotationEvaluationRecord"] = Relationship(
+    annotation_circulation_records: List["AnnotationEvaluationRecord"] = Relationship(
         back_populates="annotation_contribution",
         sa_relationship_kwargs={"cascade": "all, delete-orphan", "lazy": "selectin"}
     )
@@ -67,7 +67,7 @@ class TranscriptionContribution(SQLModel, table=True):
     transcription_sample: "TranscriptionSample" = Relationship(
         back_populates="contributions", sa_relationship_kwargs={"lazy": "selectin"}
     )
-    transcription_evaluation_records: List["TranscriptionEvaluationRecord"] = Relationship(
+    transcription_circulation_records: List["TranscriptionEvaluationRecord"] = Relationship(
         back_populates="transcription_contribution", sa_relationship_kwargs={"cascade": "all, delete-orphan", "lazy": "selectin"}
     )
 
@@ -99,7 +99,7 @@ class TranslationContribution(SQLModel, table=True):
     translation_sample: "TranslationSample" = Relationship(
         back_populates="contributions", sa_relationship_kwargs={"lazy": "selectin"}
     )
-    translation_evaluation_records: List["TranslationEvaluationRecord"] = Relationship(
+    translation_circulation_records: List["TranslationEvaluationRecord"] = Relationship(
         back_populates="translation_contribution", sa_relationship_kwargs={"cascade": "all, delete-orphan", "lazy": "selectin"}
     )
 

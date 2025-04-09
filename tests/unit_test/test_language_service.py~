@@ -409,7 +409,6 @@ async def test_deactivate_language_success(language_service, mock_language):
     # Optionally verify the timestamp is recent (within 1 second)
     assert (datetime.utcnow() - update_dict['deactivated_at']).total_seconds() < 1
 
-
 @pytest.mark.asyncio
 async def test_deactivate_language_not_found(language_service):
     """Test deactivation fails when language doesn't exist"""

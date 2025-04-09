@@ -3,7 +3,9 @@ from fastapi import HTTPException, status
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from crud.language import LanguageCrud, UserLanguageCrud
-from models.language import Language, UserLanguage
+from datetime import datetime
+from models.language import Language
+from models.user import UserLanguage
 
 
 class LanguageService:
@@ -41,11 +43,29 @@ class LanguageService:
 
         return language
 
-    async def get_all_languages(self, skip: int = 0, limit: int = 100) -> List[Language]:
+    async def get_all_languages(
+            self,
+            skip: int = 0,
+            limit: int = 100,
+            active: bool = True,
+            inactive: bool = False,
+            all_: bool = False
+    ) -> List[Language]:
         """
         Retrieve all available languages with pagination.
         """
-        languages = await self.language_repository.get_all(skip, limit)
+
+        if all_:
+            active, inactive = False, False
+        elif inactive:
+            active = False
+
+        languages = await self.language_repository.get_all(
+            skip,
+            limit,
+            active=active,
+            inactive=inactive,
+            all_=all_)
 
         if not languages:
             return []  # Explicitly return an empty list (optional)
@@ -65,14 +85,35 @@ class LanguageService:
         language.id = str(language.id)
         return language
 
-    async def delete_language(self, language_id: str) -> bool:
-        """
-        Delete a language if it exists.
-        """
-        deleted = await self.language_repository.delete(language_id)
-        if not deleted:
-            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Language not found.")
-        return deleted
+    async def reactivate_language(self, language_id: str) -> Language:
+        language = await self.language_repository.get_by_id(language_id)
+        if not language:
+            raise HTTPException(status_code=404, detail="Language not found")
+
+        if language.is_active:
+            raise HTTPException(status_code=400, detail="Language is already active")
+
+        return await self.language_repository.update(
+            language_id,
+            {"is_active": True, "deactivated_at": None}
+        )
+
+    async def deactivate_language(self, language_id: str) -> bool:
+        language = await self.language_repository.get_by_id(language_id)
+        if not language:
+            raise HTTPException(status_code=404, detail="Language not found")
+
+        if not language.is_active:
+            raise HTTPException(status_code=400, detail="Language is already deactivated")
+
+        result = await self.language_repository.update(
+            language_id,
+            {"is_active": False, "deactivated_at": datetime.utcnow()}
+        )
+        if not result:
+            raise HTTPException(status_code=400, detail="Failed to deactivate language")
+
+        return True
 
     # --- User-Language Related Operations ---
 

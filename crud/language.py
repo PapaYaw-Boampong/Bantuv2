@@ -1,7 +1,8 @@
 from typing import List, Optional, Dict, Any
 from sqlmodel import select
 from sqlalchemy.orm import joinedload
-from models.language import Language, UserLanguage
+from models.language import Language
+from models.user import UserLanguage
 from sqlalchemy.ext.asyncio import AsyncSession
 from datetime import datetime
 
@@ -44,11 +45,42 @@ class LanguageCrud:
         result = await self.db.execute(statement)
         return result.scalars().first()
 
-    async def get_all(self, skip: int = 0, limit: int = 100) -> List[Language]:
+    async def get_all(
+            self,
+            skip: int = 0,
+            limit: int = 100,
+            active: bool = False,
+            inactive: bool = False,
+            all_: bool = False
+    ) -> List[Language]:
         """
-        Get all languages with pagination (ASYNC)
+        Get languages with pagination
+
+        Args:
+            skip: Number of records to skip
+            limit: Maximum number of records to return
+            active: If True, return only active languages
+            inactive: If True, return only inactive languages
+            all: If True, return all languages regardless of status
+
+        Note:
+            By default (all params False), returns all languages (same as all=True)
+            If multiple filters are True, priority is: all > inactive > active
+            :param skip:
+            :param limit:
+            :param active:
+            :param inactive:
+            :param all_:
         """
         statement = select(Language).offset(skip).limit(limit)
+
+        # Apply filters based on parameters
+        if not all_:
+            if inactive:
+                statement = statement.where(Language.is_active == False)
+            elif active:
+                statement = statement.where(Language.is_active == True)
+
         results = await self.db.execute(statement)
         return list(results.scalars().all())
 
@@ -69,18 +101,6 @@ class LanguageCrud:
         await self.db.commit()
         await self.db.refresh(language)
         return language
-
-    async def delete(self, language_id: str) -> bool:
-        """
-        Delete a language (ASYNC)
-        """
-        language = await self.get_by_id(language_id)
-        if not language:
-            return False
-
-        await self.db.delete(language)
-        await self.db.commit()
-        return True
 
 
 class UserLanguageCrud:

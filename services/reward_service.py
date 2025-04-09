@@ -12,6 +12,8 @@ from schemas.rewards import (
     GetRewards, ChallengeRewardUpdate
 )
 
+from services.challenge_service import ChallengeService
+
 
 class RewardsService:
     def __init__(self, db: AsyncSession):
@@ -120,7 +122,11 @@ class RewardsService:
         if not reward:
             return None
 
-        challenge =
+        challenge_service = ChallengeService(self.db)
+        published = await challenge_service.is_published(str(reward.challenge_id))
+
+        if published:
+            raise Exception("Cannot update a published challenge reward")
 
         update_data = reward_data.model_dump(exclude_unset=True)
         for key, value in update_data.items():

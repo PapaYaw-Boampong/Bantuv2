@@ -15,7 +15,7 @@ from models.user import User
 router = APIRouter()
 
 
-@router.get("/me", response_model=UserProfileResponse)
+@router.get("/me", response_model=UserResponse)
 async def get_user(
         db: AsyncSession = Depends(get_session),
         current_user: User = Depends(get_current_active_user)
@@ -24,7 +24,7 @@ async def get_user(
     Get current user profile
     """
     user_service = UserService(db)
-    profile = await user_service.get_user_profile(str(current_user.id))
+    profile = await get_user_profile(str(current_user.id))
     return profile
 
 
@@ -81,7 +81,7 @@ async def get_user_by_id(
     Get user by ID (Admin only)
     """
     user_service = UserService(db)
-    profile = await user_service.get_user_profile(user_id)
+    profile = await get_user_profile(user_id)
     return profile
 
 

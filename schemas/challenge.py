@@ -8,14 +8,23 @@ from models.challenge import EventType, TaskType, EventCategory, ChallengeStatus
 class ChallengeCreate(BaseModel):
     challenge_name: str
     description: Optional[str] = None
+
+
+class Challenge(ChallengeCreate):
+    id: UUID4
     event_type: EventType
     task_type: TaskType
     event_category: EventCategory
     start_date: datetime
     end_date: datetime
+    status: ChallengeStatus
     is_public: bool = True
+    is_published: bool = False
     reward: UUID4  # Reference to the reward ID
     target_contribution_count: Optional[int] = None
+
+    class Config:
+        orm_mode = True
 
 
 class ChallengeUpdate(BaseModel):
@@ -31,6 +40,7 @@ class ChallengeUpdate(BaseModel):
     is_published: Optional[bool] = None
     reward: Optional[UUID4] = None
     target_contribution_count: Optional[int] = None
+    rules: Optional[List[dict]] = None  # Assuming rules are a list of dictionaries
 
 
 class ChallengeParticipationCreate(BaseModel):

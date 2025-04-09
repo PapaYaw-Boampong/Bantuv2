@@ -1,4 +1,4 @@
-from sqlmodel import SQLModel, Field, Relationship
+from sqlmodel import SQLModel, Field, Relationship, Column, JSON
 from enum import Enum
 from typing import Optional, List, TYPE_CHECKING
 from datetime import datetime
@@ -32,7 +32,7 @@ class Milestone(SQLModel, table=True):
     name: str
     description: Optional[str] = None
     reward_type: RewardType  # badge, points, perk
-    reward_value: str  # JSON or simple string (e.g., {"badge": "Pro Translator"})
+    reward_value: dict = Field(sa_column=Column(JSON))
     required_actions: int = Field(ge=0)  # Number of actions needed to unlock
 
     milestones: List["UserMilestone"] = Relationship(
@@ -55,35 +55,22 @@ class UserMilestone(SQLModel, table=True):
 class ChallengeReward(SQLModel, table=True):
     __tablename__ = "challenge_reward"
     id: uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True, index=True)
-    challenge_id: uuid.UUID = Field(foreign_key="challenge.id")
 
     reward_type: RewardType  # Cash, badge, leaderboard rank
-    reward_value: str  # JSON for flexible storage (e.g., {"points": "500"})
+    reward_value: dict = Field(sa_column=Column(JSON))
     created_at: datetime = Field(default_factory=datetime.utcnow)
-    claimed: bool = Field(default=False)
-
-    # Relationship
-    distributions: List["RewardDistribution"] = Relationship(
-        back_populates="reward", sa_relationship_kwargs={"lazy": "selectin"}
-    )
 
     # New Relationship to UserChallengeReward
     user_rewards: List["UserChallengeReward"] = Relationship(
         back_populates="reward", sa_relationship_kwargs={"lazy": "selectin"}
     )
 
-    challenge: "Challenge" = Relationship(back_populates="rewards")
-
-
-class RewardDistribution(SQLModel, table=True):
-    __tablename__ = "reward_distribution"
-    id: uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True, index=True)
-    reward_id: uuid.UUID = Field(foreign_key="challenge_reward.id")
-
-    distribution_type: RewardDistributionType
-    allocation: str  # JSON field for custom splits (e.g., {"1st": 50, "2nd": 30, "3rd": 20})
-
-    reward: "ChallengeReward" = Relationship(back_populates="distributions")
+    challenge: "Challenge" = Relationship(
+        back_populates="reward",
+        sa_relationship_kwargs={"lazy": "selectin", "uselist": False,  # One-to-one relationship
+                                "single_parent": True # Ensures the ChallengeReward is only linked to a single Challenge
+                                }
+    )
 
 
 class UserChallengeReward(SQLModel, table=True):

@@ -47,7 +47,7 @@ async def get_current_user(
 
     # Fetch user from database
     user_service = UserService(db)
-    user = await user_service.get_user_by_id(user_id)
+    user = await user_service.get_detailed_user_by_id(user_id)
 
     if not user:
         raise HTTPException(

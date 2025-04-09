@@ -1,5 +1,5 @@
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, desc, func, update, delete
+from sqlalchemy import select, desc, func, update
 from sqlalchemy.orm import selectinload  # This is the missing import
 from typing import List, Optional, Dict, Any
 from uuid import UUID
@@ -237,43 +237,3 @@ class ChallengeRuleRepository:
             .where(ChallengeRule.challenge_id == challenge_id)
         )
         return result.scalars().all()
-
-    async def update_rule(
-            self,
-            rule_id: UUID,
-            update_data: dict
-    ) -> Optional[ChallengeRule]:
-        """Update an existing rule"""
-        result = await self.db.execute(
-            select(ChallengeRule)
-            .where(ChallengeRule.id == rule_id)
-        )
-        rule = result.scalar_one_or_none()
-
-        if rule:
-            for key, value in update_data.items():
-                setattr(rule, key, value)
-            rule.updated_at = datetime.utcnow()
-
-            await self.db.commit()
-            await self.db.refresh(rule)
-
-        return rule
-
-    async def delete_rule(self, rule_id: UUID) -> bool:
-        """Delete a specific rule"""
-        result = await self.db.execute(
-            delete(ChallengeRule)
-            .where(ChallengeRule.id == rule_id)
-        )
-        await self.db.commit()
-        return result.rowcount > 0
-
-    async def delete_all_challenge_rules(self, challenge_id: UUID) -> bool:
-        """Delete all rules for a specific challenge"""
-        result = await self.db.execute(
-            delete(ChallengeRule)
-            .where(ChallengeRule.challenge_id == challenge_id)
-        )
-        await self.db.commit()
-        return result.rowcount > 0
