@@ -137,26 +137,19 @@ class ChallengeRepository:
         await self.db.refresh(participation)
         return participation
 
-    async def update_participation_stats(
+    async def get_challenge_participation(
             self,
-            participation_id: UUID,
-            stats_update: Dict[str, Any]
+            user_id: UUID,
+            event_id: UUID
     ) -> Optional[ChallengeParticipation]:
-        """Update a participant's statistics."""
-        result = await self.db.execute(
-            select(ChallengeParticipation)
-            .where(ChallengeParticipation.id == participation_id)
+        query = select(ChallengeParticipation).where(
+            ChallengeParticipation.user_id == user_id,
+            ChallengeParticipation.event_id == event_id
         )
-        participation = result.scalar_one_or_none()
+        result = await self.db.execute(query)
+        return result.scalar_one_or_none()
 
-        if participation:
-            for key, value in stats_update.items():
-                setattr(participation, key, value)
-            participation.updated_at = datetime.utcnow()
 
-            await self.db.commit()
-            await self.db.refresh(participation)
-        return participation
 
     async def get_leaderboard(
             self,

@@ -6,7 +6,7 @@ from datetime import datetime
 from enum import Enum as PyEnum
 
 if TYPE_CHECKING:
-    from models import User, ChallengeReward, Language
+    from models import User, ChallengeReward, Language, EvaluationInstance
 
 
 class ChallengeStatus(str, PyEnum):
@@ -87,6 +87,14 @@ class Challenge(SQLModel, table=True):
         }
     )
 
+    evaluation_instance: List["EvaluationInstance"] = Relationship(
+        back_populates="challenge",
+        sa_relationship_kwargs={
+            "cascade": "all, delete-orphan",
+            "lazy": "selectin"
+        }
+    )
+
 
 # ===================== EVENT PARTICIPATION TABLE =====================
 class ChallengeParticipation(SQLModel, table=True):
@@ -158,3 +166,5 @@ class ChallengeRule(SQLModel, table=True):
             "passive_deletes": True
         }
     )
+
+

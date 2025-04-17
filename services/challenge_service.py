@@ -1,6 +1,6 @@
 from typing import List, Optional, Dict, Any, Tuple
 from datetime import datetime
-import uuid
+from uuid import UUID
 from fastapi import HTTPException
 from sqlmodel import select, and_, or_, desc
 from sqlalchemy.orm import selectinload
@@ -76,9 +76,9 @@ class ChallengeService:
         await self.db.refresh(challenge)
         return challenge
 
-    async def update_progress(self, challenge_id: uuid.UUID, update_data: Dict[str, Any]) -> Optional[Challenge]:
+    async def update_progress(self, challenge_id: UUID, update_data: Dict[str, Any]) -> Optional[Challenge]:
         """Update challenge and recalculate completion %"""
-        challenge = await self.get_challenge(str(challenge_id))
+        challenge = await self.get_challenge(challenge_id)
         if not challenge:
             return None
 
@@ -97,14 +97,16 @@ class ChallengeService:
         await self.db.refresh(challenge)
         return challenge
 
-    async def get_challenge(self, challenge_id: str) -> Optional[Challenge]:
+    async def get_challenge(self, challenge_id: UUID) -> Optional[Challenge]:
 
         result = await self.db.get(Challenge, challenge_id)
-        if not result:
+        challenge = result.scalars().first() if result else None
+
+        if not challenge:
             raise HTTPException(status_code=404, detail="Challenge not found")
         return result
 
-    async def is_published(self, challenge_id: str) -> bool:
+    async def is_published(self, challenge_id: UUID) -> bool:
         challenge = await self.get_challenge(challenge_id)
         if not challenge:
             return False
@@ -112,7 +114,7 @@ class ChallengeService:
 
     async def update_challenge(
             self,
-            challenge_id: str,
+            challenge_id: UUID,
             challenge_data: ChallengeUpdate
     ) -> Optional[Challenge]:
         """Update challenge and its rules with proper error handling"""
@@ -174,7 +176,7 @@ class ChallengeService:
                 detail=f"Failed to update challenge: {str(e)}"
             )
 
-    async def delete_challenge(self, challenge_id: str) -> bool:
+    async def delete_challenge(self, challenge_id: UUID) -> bool:
         challenge = await self.get_challenge(challenge_id)
         if not challenge:
             return False
@@ -183,7 +185,7 @@ class ChallengeService:
             await self.db.commit()
             return True
         else:
-            raise ValueError("Cannot delete an active")
+            raise ValueError("Cannot delete an active challenge")
 
     async def list_challenges(self, query_params: GetChallenges) -> List[Challenge]:
         query = select(Challenge)
@@ -213,7 +215,7 @@ class ChallengeService:
         result = await self.db.execute(query)
         return list(result.scalars().all())
 
-    async def publish_challenge(self, challenge_id: str) -> Optional[Challenge]:
+    async def publish_challenge(self, challenge_id: UUID) -> Optional[Challenge]:
         """Mark a challenge as published, making it visible to users"""
         challenge = await self.get_challenge(challenge_id)
         if not challenge or challenge.completion_percent < 100:
@@ -230,7 +232,7 @@ class ChallengeService:
         await self.db.refresh(challenge)
         return challenge
 
-    async def unpublish_challenge(self, challenge_id: str) -> Optional[Challenge]:
+    async def unpublish_challenge(self, challenge_id: UUID) -> Optional[Challenge]:
         """Mark a challenge as unpublished, hiding it from users"""
         challenge = await self.get_challenge(challenge_id)
         if not challenge:
@@ -244,7 +246,7 @@ class ChallengeService:
         await self.db.refresh(challenge)
         return challenge
 
-    async def update_challenge_status(self, challenge_id: str, status: ChallengeStatus) -> Optional[Challenge]:
+    async def update_challenge_status(self, challenge_id: UUID, status: ChallengeStatus) -> Optional[Challenge]:
         """Manually update the status of a challenge"""
         challenge = await self.get_challenge(challenge_id)
         if not challenge:
@@ -267,7 +269,7 @@ class ChallengeService:
             raise ValueError("Challenge not found")
 
         # Check if the user is already participating
-        existing_participation = await self.db.execute(
+        result = await self.db.execute(
             select(ChallengeParticipation).where(
                 and_(
                     ChallengeParticipation.event_id == participation_data.event_id,
@@ -276,9 +278,10 @@ class ChallengeService:
             )
         )
 
+        result = await self.db.execute(...)
+        existing_participation = result.scalar_one_or_none()
         if existing_participation:
-            raise ValueError("User is already participating in this challenge")
-
+            raise ValueError("User is already participating")
         # Create the participation record
         participation = ChallengeParticipation(
             event_id=participation_data.event_id,
@@ -296,10 +299,10 @@ class ChallengeService:
 
         return participation, challenge
 
-    async def leave_challenge(self, event_id: str, user_id: str) -> bool:
+    async def leave_challenge(self, event_id: UUID, user_id: UUID) -> bool:
         """Remove a user from a challenge and decrement the participant count"""
         # Find the participation record
-        participation = await self.db.execute(
+        result = await self.db.execute(
             select(ChallengeParticipation).where(
                 and_(
                     ChallengeParticipation.event_id == event_id,
@@ -308,6 +311,7 @@ class ChallengeService:
             )
         )
 
+        participation = result.scalar_one_or_none()
         if not participation:
             return False
 
@@ -327,8 +331,11 @@ class ChallengeService:
 
         return True
 
-    async def get_challenge_participation(self, event_id: str,
-                                          user_id: str) -> Optional[ChallengeParticipation]:
+    async def get_challenge_participation(
+            self,
+            event_id: UUID,
+            user_id: UUID
+    ) -> Optional[ChallengeParticipation]:
         """Get a user's participation record for a specific challenge"""
         result = await self.db.execute(
             select(ChallengeParticipation).where(
@@ -341,27 +348,78 @@ class ChallengeService:
         records = list(result.scalars().all())
         return records[0] if records else None
 
-    async def update_participation_stats(self,
-                                         event_id: str,
-                                         user_id: str,
-                                         stats_data: ChallengeParticipationUpdate) -> Optional[ChallengeParticipation]:
-        """Update a user's statistics for a challenge"""
-        participation = await self.get_challenge_participation(event_id, user_id)
-        if not participation:
-            return None
+    async def update_challenge_participation_stats(
+            self,
+            participation: ChallengeParticipation,
+            hours: int = 0,
+            sentences: int = 0,
+            tokens: int = 0,
+            is_contribution: bool = False,
+            is_evaluation: bool = False,
+            accepted: bool = False,
+            points: int = 0
+    ) -> ChallengeParticipation:
+        participation.total_points += points
+        if is_contribution:
+            participation.contribution_count += 1
+            if accepted:
+                participation.accepted_contributions += 1
 
-        update_data = stats_data.model_dump(exclude_unset=True)
-        for key, value in update_data.items():
-            setattr(participation, key, value)
+        if is_evaluation:
+            participation.total_hours_speech += hours
+            participation.total_sentences_translated += sentences
+            participation.total_tokens_produced += tokens
+
+            participation.evaluation_count += 1
+            if accepted:
+                participation.accepted_evaluations += 1
+
+        # Update scores
+        if participation.contribution_count:
+            participation.contribution_acceptance_score = (
+                    participation.accepted_contributions / participation.contribution_count
+            )
+        if participation.evaluation_count:
+            participation.evaluation_acceptance_score = (
+                    participation.accepted_evaluations / participation.evaluation_count
+            )
 
         participation.updated_at = datetime.utcnow()
 
-        self.db.add(participation)
         await self.db.commit()
         await self.db.refresh(participation)
         return participation
 
-    async def get_challenge_participants(self, event_id: str, skip: int = 0, limit: int = 100
+    async def update_participation_stats(
+            self,
+            event_id: UUID,
+            user_id: UUID,
+            stats_data: dict
+    ) -> Optional[ChallengeParticipation]:
+        participation = await self.get_challenge_participation(event_id, user_id)
+        if not participation:
+            return None
+
+        hours = stats_data.get("hours", 0)
+        sentences = stats_data.get("sentences", 0)
+        tokens = stats_data.get("tokens", 0)
+        is_contribution = stats_data.get("is_contribution", False)
+        is_evaluation = stats_data.get("is_evaluation", False)
+        accepted = stats_data.get("accepted", False)
+        points = stats_data.get("points", 0)
+
+        return await self.update_challenge_participation_stats(
+            participation,
+            hours=hours,
+            sentences=sentences,
+            tokens=tokens,
+            is_contribution=is_contribution,
+            is_evaluation=is_evaluation,
+            accepted=accepted,
+            points=points
+        )
+
+    async def get_challenge_participants(self, event_id: UUID, skip: int = 0, limit: int = 100
                                          ) -> List[ChallengeParticipation]:
         """Get all participants for a challenge"""
         query = select(ChallengeParticipation).where(ChallengeParticipation.event_id == event_id)
@@ -371,7 +429,7 @@ class ChallengeService:
 
     async def get_user_challenges(
             self,
-            user_id: str,
+            user_id: UUID,
             skip: int = 0,
             limit: int = 100,
             *,
@@ -413,20 +471,8 @@ class ChallengeService:
 
         return list(result.scalars().all())
 
-    async def increment_challenge_contribution_count(self, event_id: str) -> Optional[Challenge]:
-        """Increment the contribution count for a challenge"""
-        challenge = await self.get_challenge(event_id)
-        if not challenge:
-            return None
-
-        challenge.contribution_count += 1
-        self.db.add(challenge)
-        await self.db.commit()
-        await self.db.refresh(challenge)
-        return challenge
-
     # Challenge leaderboard methods
-    async def get_challenge_leaderboard(self, event_id: str, skip: int = 0, limit: int = 10
+    async def get_challenge_leaderboard(self, event_id: UUID, skip: int = 0, limit: int = 10
                                         ) -> List[Dict[str, Any]]:
         """Get the leaderboard for a challenge, sorted by total points"""
         # Join ChallengeParticipation with User to get usernames

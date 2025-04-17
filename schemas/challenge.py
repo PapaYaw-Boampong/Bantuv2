@@ -23,8 +23,7 @@ class Challenge(ChallengeCreate):
     reward: UUID4  # Reference to the reward ID
     target_contribution_count: Optional[int] = None
 
-    class Config:
-        orm_mode = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class ChallengeUpdate(BaseModel):

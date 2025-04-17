@@ -23,6 +23,19 @@ class Settings(BaseModel):
         "http://localhost:8000",  # FastAPI default
     ]
 
+    TRANSCRIPTION_BASE_WIDTH: int = 6
+    TRANSLATION_BASE_WIDTH: int = 3
+    ANNOTATION_BASE_WIDTH: int = 4
+
+    DEFAULT_BASE_WIDTH: int = 4
+
+    TTE: int = 30
+
+    POINTS_PER_CONTRIBUTION: int = 10
+    POINTS_PER_EVALUATION: int = 10
+    POINTS_PER_CONTRIBUTION_ACCEPTANCE: int = 8
+    POINTS_FOR_ACCURATE_EVALUATION: int = 5
+
     # Security settings
     JWT_ALGORITHM: str = os.getenv("JWT_ALGORITHM", "HS256")
     ACCESS_TOKEN_EXPIRE_MINUTES: int = int(os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES", "15"))

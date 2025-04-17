@@ -36,14 +36,12 @@ class MilestoneResponse(BaseModel):
 class UserMilestoneCreate(BaseModel):
     user_id: str
     milestone_id: str
-    achieved_at: datetime = datetime.utcnow()
 
 
 class UserMilestoneResponse(BaseModel):
     id: str
     user_id: str
     milestone_id: str
-    achieved_at: datetime
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -57,7 +55,7 @@ class ChallengeRewardCreate(BaseModel):
 
 class ChallengeRewardUpdate(BaseModel):
     reward_type: Optional[RewardType] = None
-    reward_value: Optional[str] = None
+    reward_value: Optional[dict] = None
 
 
 class ChallengeRewardResponse(BaseModel):

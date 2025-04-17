@@ -5,6 +5,7 @@ from models.language import Language
 from models.user import UserLanguage
 from sqlalchemy.ext.asyncio import AsyncSession
 from datetime import datetime
+from uuid import UUID
 
 
 class LanguageCrud:
@@ -21,7 +22,7 @@ class LanguageCrud:
         await self.db.refresh(language)
         return language
 
-    async def get_by_id(self, language_id: str) -> Optional[Language]:
+    async def get_by_id(self, language_id: UUID) -> Optional[Language]:
         """
         Get a language by ID (ASYNC)
         """
@@ -62,15 +63,6 @@ class LanguageCrud:
             active: If True, return only active languages
             inactive: If True, return only inactive languages
             all: If True, return all languages regardless of status
-
-        Note:
-            By default (all params False), returns all languages (same as all=True)
-            If multiple filters are True, priority is: all > inactive > active
-            :param skip:
-            :param limit:
-            :param active:
-            :param inactive:
-            :param all_:
         """
         statement = select(Language).offset(skip).limit(limit)
 
@@ -84,7 +76,7 @@ class LanguageCrud:
         results = await self.db.execute(statement)
         return list(results.scalars().all())
 
-    async def update(self, language_id: str, update_data: Dict[str, Any]) -> Optional[Language]:
+    async def update(self, language_id: UUID, update_data: Dict[str, Any]) -> Optional[Language]:
         """
         Update a language (ASYNC)
         """
@@ -117,7 +109,7 @@ class UserLanguageCrud:
         await self.db.refresh(user_language)
         return user_language
 
-    async def get_by_id(self, user_language_id: str) -> Optional[UserLanguage]:
+    async def get_by_id(self, user_language_id: UUID) -> Optional[UserLanguage]:
         """
         Get a user-language relationship by ID (ASYNC)
         """
@@ -129,7 +121,19 @@ class UserLanguageCrud:
         result = await self.db.execute(statement)
         return result.scalars().first()
 
-    async def get_languages_by_user(self, user_id: str, skip: int = 0, limit: int = 100) -> List[UserLanguage]:
+    async def get_by_user_and_language(self, user_id: UUID, language_id: UUID, task_type: str) -> Optional[UserLanguage]:
+        """
+        Get a user-language relationship by user ID and language ID (ASYNC)
+        """
+        statement = (
+            select(UserLanguage)
+            .where(UserLanguage.user_id == user_id, UserLanguage.language_id == language_id)
+            .where(UserLanguage.task_type == task_type)  # filter for task type
+        )
+        result = await self.db.execute(statement)
+        return result.scalars().first()
+
+    async def get_languages_by_user(self, user_id: UUID, skip: int = 0, limit: int = 100) -> List[UserLanguage]:
         """
         Get all languages associated with a user (ASYNC)
         """
@@ -143,7 +147,7 @@ class UserLanguageCrud:
         result = await self.db.execute(statement)
         return list(result.scalars().all())
 
-    async def get_users_by_language(self, language_id: str, skip: int = 0, limit: int = 100) -> List[UserLanguage]:
+    async def get_users_by_language(self, language_id: UUID, skip: int = 0, limit: int = 100) -> List[UserLanguage]:
         """
         Get all users associated with a language (ASYNC)
         """
@@ -151,7 +155,7 @@ class UserLanguageCrud:
         result = await self.db.execute(statement)
         return list(result.scalars().all())
 
-    async def delete(self, user_language_id: str) -> bool:
+    async def delete(self, user_language_id: UUID) -> bool:
         """
         Delete a user-language relationship (ASYNC)
         """
@@ -163,18 +167,19 @@ class UserLanguageCrud:
         await self.db.commit()
         return True
 
-    async def update_speech_hours(self, pair_id: str, hours: int) -> UserLanguage:
+    async def update_speech_hours(self, user_id: UUID, language_id: UUID, hours: float, task_type: str) -> UserLanguage:
         """
         Update speech hours for a user-language relationship (ASYNC)
         """
-        user_language = await self.get_by_id(pair_id)
+        user_language = await self.get_by_user_and_language(user_id, language_id, task_type)
 
         if not user_language:
             user_language = await self.create({
                 "user_id": user_language.user_id,
                 "language_id": user_language.language_id,
                 "total_hours_speech": hours,
-                "total_sentences_translated": 0
+                "total_sentences_translated": 0,
+                "total_annotation_tokens": 0
             })
         else:
             user_language.total_hours_speech += hours
@@ -184,18 +189,20 @@ class UserLanguageCrud:
 
         return user_language
 
-    async def update_sentences_translated(self, user_language_id: str, sentences: int) -> UserLanguage:
+    async def update_sentences_translated(self, user_id: UUID, language_id: UUID, sentences: int,
+                                          task_type: str) -> UserLanguage:
         """
         Update sentences translated for a user-language relationship (ASYNC)
         """
-        user_language = await self.get_by_id(user_language_id)
+        user_language = await self.get_by_user_and_language(user_id, language_id, task_type)
 
         if not user_language:
             user_language = await self.create({
                 "user_id": user_language.user_id,
                 "language_id": user_language.language_id,
                 "total_hours_speech": 0,
-                "total_sentences_translated": sentences
+                "total_sentences_translated": sentences,
+                "total_annotation_tokens": 0
             })
         else:
             user_language.total_sentences_translated += sentences
@@ -204,3 +211,94 @@ class UserLanguageCrud:
             await self.db.refresh(user_language)
 
         return user_language
+
+    async def update_annotation_tokens(self, user_id: UUID, language_id: UUID, tokens: int,
+                                       task_type: str) -> UserLanguage:
+        """
+        Update annotation tokens for a user-language relationship (ASYNC)
+        """
+        user_language = await self.get_by_user_and_language(user_id, language_id, task_type)
+
+        if not user_language:
+            user_language = await self.create({
+                "user_id": user_id,
+                "language_id": language_id,
+                "total_hours_speech": 0,
+                "total_sentences_translated": 0,
+                "total_annotation_tokens": tokens
+            })
+        else:
+            user_language.total_annotation_tokens += tokens
+            self.db.add(user_language)
+            await self.db.commit()
+            await self.db.refresh(user_language)
+
+        return user_language
+
+    async def update_stats(
+            self,
+            user_language: UserLanguage,
+            hours: int = 0,
+            sentences: int = 0,
+            tokens: int = 0,
+            is_contribution: bool = False,
+            is_evaluation: bool = False,
+            accepted: bool = False
+    ) -> UserLanguage:
+        user_language.total_hours_speech += hours
+        user_language.total_sentences_translated += sentences
+        user_language.total_annotation_tokens += tokens
+
+        if is_contribution:
+            user_language.contribution_count += 1
+            if accepted:
+                user_language.accepted_contributions += 1
+
+        if is_evaluation:
+            user_language.evaluation_count += 1
+            if accepted:
+                user_language.accepted_evaluations += 1
+
+        # Update scores
+        if user_language.contribution_count:
+            user_language.contribution_acceptance_score = (
+                    user_language.accepted_contributions / user_language.contribution_count
+            )
+        if user_language.evaluation_count:
+            user_language.evaluation_acceptance_score = (
+                    user_language.accepted_evaluations / user_language.evaluation_count
+            )
+
+        await self.db.commit()
+        await self.db.refresh(user_language)
+        return user_language
+
+    async def update_language_stats(
+            self,
+            language_id: UUID,
+            user_id: UUID,
+            task_type: str,
+            stats_data: dict
+    ) -> Optional[UserLanguage]:
+
+        user_language = await self.get_by_user_and_language(user_id, language_id, task_type)
+
+        if not user_language:
+            raise ValueError("UserLanguage not found")
+
+        hours = stats_data.get("hours", 0)
+        sentences = stats_data.get("sentences", 0)
+        tokens = stats_data.get("tokens", 0)
+        is_contribution = stats_data.get("is_contribution", False)
+        is_evaluation = stats_data.get("is_evaluation", False)
+        accepted = stats_data.get("accepted", False)
+
+        return await self.update_stats(
+            user_language,
+            hours=hours,
+            sentences=sentences,
+            tokens=tokens,
+            is_contribution=is_contribution,
+            is_evaluation=is_evaluation,
+            accepted=accepted,
+        )

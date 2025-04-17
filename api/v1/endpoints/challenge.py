@@ -5,7 +5,11 @@ from database import get_session
 from models.challenge import Challenge, ChallengeStatus
 from models.user import User
 from schemas.challenge import (
-    ChallengeCreate, ChallengeUpdate, ChallengeParticipationCreate, GetChallenges
+    ChallengeCreate,
+    ChallengeUpdate,
+    ChallengeParticipationCreate,
+    ChallengeParticipationUpdate,
+    GetChallenges,
 )
 from services.challenge_service import ChallengeService
 from api.v1.deps import get_current_active_user, get_current_superuser
@@ -95,11 +99,11 @@ async def join_challenge(
 
 @router.post("/{challenge_id}/leave", response_model=Dict[str, Any])
 async def leave_challenge(
-        challenge_id: str = Path(..., description="The ID of the challenge to delete"),
+        challenge_id: str = Path(..., description="The ID of the challenge to leave"),
         challenge_service: ChallengeService = Depends(get_challenge_service),
         current_user: User = Depends(get_current_active_user)
 ):
-    """Join a challenge."""
+    """Leave a challenge."""
     try:
         result = await challenge_service.leave_challenge(challenge_id, str(current_user.id))
         if result:
@@ -124,7 +128,6 @@ async def get_challenge_leaderboard(
 async def update_challenge_status(
         status: ChallengeStatus,
         challenge_id: str = Path(..., description="The ID of the challenge"),
-
         challenge_service: ChallengeService = Depends(get_challenge_service),
         current_user: User = Depends(get_current_superuser)
 ):
@@ -132,4 +135,51 @@ async def update_challenge_status(
     challenge = await challenge_service.update_challenge_status(challenge_id, status)
     if not challenge:
         raise HTTPException(status_code=404, detail=f"Challenge with ID {challenge_id} not found")
+    return challenge
+
+
+@router.get("/{challenge_id}/participants", response_model=List[Dict[str, Any]])
+async def get_challenge_participants(
+        challenge_id: str = Path(..., description="The ID of the challenge"),
+        skip: int = Query(0, description="Skip N participants"),
+        limit: int = Query(10, description="Limit number of participants"),
+        challenge_service: ChallengeService = Depends(get_challenge_service),
+        current_user: User = Depends(get_current_active_user)
+):
+    """Get participants in a challenge."""
+    return await challenge_service.get_challenge_participants(challenge_id, skip, limit)
+
+
+@router.patch("/{challenge_id}/participants/{user_id}", response_model=Dict[str, Any])
+async def update_participant_stats(
+        challenge_id: str,
+        user_id: str,
+        update_data: ChallengeParticipationUpdate,
+        challenge_service: ChallengeService = Depends(get_challenge_service),
+        current_user: User = Depends(get_current_superuser)
+):
+    """Update stats or role of a participant."""
+    updated = await challenge_service.update_participant_stats(challenge_id, user_id, update_data)
+    return {"message": "Participant updated successfully", "participant": updated}
+
+
+@router.post("/{challenge_id}/publish", response_model=Challenge)
+async def publish_challenge(
+        challenge_id: str,
+        challenge_service: ChallengeService = Depends(get_challenge_service),
+        current_user: User = Depends(get_current_superuser)
+):
+    """Publish a challenge."""
+    challenge = await challenge_service.publish_challenge(challenge_id)
+    return challenge
+
+
+@router.post("/{challenge_id}/unpublish", response_model=Challenge)
+async def unpublish_challenge(
+        challenge_id: str,
+        challenge_service: ChallengeService = Depends(get_challenge_service),
+        current_user: User = Depends(get_current_superuser)
+):
+    """Unpublish a challenge."""
+    challenge = await challenge_service.unpublish_challenge(challenge_id)
     return challenge

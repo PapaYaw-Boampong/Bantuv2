@@ -585,14 +585,14 @@ async def test_update_speech_hours(language_service, mock_user_language):
     user_id = str(uuid.uuid4())
     language_id = str(uuid.uuid4())
     hours = 10
-    language_service.user_language_repository.update_speech_hours.return_value = mock_user_language
+    language_service.user_language_repository.update_lang_speech_hours.return_value = mock_user_language
 
     # Execute
-    result = await language_service.update_speech_hours(user_id, language_id, hours)
+    result = await language_service.update_lang_speech_hours(user_id, language_id, hours)
 
     # Assert
     assert result == mock_user_language
-    language_service.user_language_repository.update_speech_hours.assert_called_once_with(user_id, language_id, hours)
+    language_service.user_language_repository.update_lang_speech_hours.assert_called_once_with(user_id, language_id, hours)
 
 
 @pytest.mark.asyncio
@@ -602,13 +602,13 @@ async def test_update_sentences_translated(language_service, mock_user_language)
     user_id = str(uuid.uuid4())
     language_id = str(uuid.uuid4())
     sentences = 100
-    language_service.user_language_repository.update_sentences_translated.return_value = mock_user_language
+    language_service.user_language_repository.update_lang_sentences_translated.return_value = mock_user_language
 
     # Execute
-    result = await language_service.update_sentences_translated(user_id, language_id, sentences)
+    result = await language_service.update_lang_sentences_translated(user_id, language_id, sentences)
 
     # Assert
     assert result == mock_user_language
-    language_service.user_language_repository.update_sentences_translated.assert_called_once_with(
+    language_service.user_language_repository.update_lang_sentences_translated.assert_called_once_with(
         user_id, language_id, sentences
     )

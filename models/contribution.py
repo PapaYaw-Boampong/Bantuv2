@@ -17,13 +17,15 @@ class AnnotationContribution(SQLModel, table=True):
         index=True
     )
     user_id: uuid.UUID = Field(foreign_key="user.id")
-    annotation_sample_id: uuid.UUID = Field(foreign_key="annotation_sample.id")
+    sample_id: uuid.UUID = Field(foreign_key="annotation_sample.id")
 
     target_text: str = Field(default="")
 
     created_at: datetime = Field(default_factory=datetime.utcnow)
     flagged: bool = Field(default=False)
-    active: bool = Field(default=True)
+    # active: bool = Field(default=False)
+    passed: bool = Field(default=False)
+    accepted: bool = Field(default=False)
 
     upvotes: int = Field(default=0)
 
@@ -34,10 +36,10 @@ class AnnotationContribution(SQLModel, table=True):
     annotation_sample: "AnnotationSample" = Relationship(
         back_populates="annotation_contributions", sa_relationship_kwargs={"lazy": "selectin"}
     )
-    annotation_evaluation_records: List["AnnotationEvaluationRecord"] = Relationship(
-        back_populates="annotation_contribution",
-        sa_relationship_kwargs={"cascade": "all, delete-orphan", "lazy": "selectin"}
-    )
+    # annotation_evaluation_records: List["AnnotationEvaluationRecord"] = Relationship(
+    #     back_populates="annotation_contribution",
+    #     sa_relationship_kwargs={"cascade": "all, delete-orphan", "lazy": "selectin"}
+    # )
 
 
 # ===================== TRANSCRIPTION CONTRIBUTION TABLE ===============
@@ -50,13 +52,15 @@ class TranscriptionContribution(SQLModel, table=True):
         index=True
     )
     user_id: uuid.UUID = Field(foreign_key="user.id")
-    transcription_sample_id: uuid.UUID = Field(foreign_key="transcription_sample.id")
+    sample_id: uuid.UUID = Field(foreign_key="transcription_sample.id")
 
     target_url: str = Field(default="")
 
     created_at: datetime = Field(default_factory=datetime.utcnow)
     flagged: bool = Field(default=False)
-    active: bool = Field(default=True)
+    # active: bool = Field(default=False)
+    passed: bool = Field(default=False)
+    accepted: bool = Field(default=False)
 
     upvotes: int = Field(default=0)
 
@@ -67,9 +71,10 @@ class TranscriptionContribution(SQLModel, table=True):
     transcription_sample: "TranscriptionSample" = Relationship(
         back_populates="contributions", sa_relationship_kwargs={"lazy": "selectin"}
     )
-    transcription_evaluation_records: List["TranscriptionEvaluationRecord"] = Relationship(
-        back_populates="transcription_contribution", sa_relationship_kwargs={"cascade": "all, delete-orphan", "lazy": "selectin"}
-    )
+    # transcription_evaluation_records: List["TranscriptionEvaluationRecord"] = Relationship(
+    #     back_populates="transcription_contribution",
+    #     sa_relationship_kwargs={"cascade": "all, delete-orphan", "lazy": "selectin"}
+    # )
 
 
 # ===================== TRANSLATION CONTRIBUTION TABLE =================
@@ -83,14 +88,17 @@ class TranslationContribution(SQLModel, table=True):
     )
 
     user_id: uuid.UUID = Field(foreign_key="user.id")
-    translation_sample_id: uuid.UUID = Field(foreign_key="translation_sample.id")
+    sample_id: uuid.UUID = Field(foreign_key="translation_sample.id")
 
     target_text: str = Field(default="")
 
     created_at: datetime = Field(default_factory=datetime.utcnow)
-    active: bool = Field(default=True)
+    # active: bool = Field(default=False)
 
     upvotes: int = Field(default=0)
+
+    passed: bool = Field(default=False)
+    flagged: bool = Field(default=False)
 
     # Relationships with optimized loading
     user: "User" = Relationship(
@@ -99,85 +107,8 @@ class TranslationContribution(SQLModel, table=True):
     translation_sample: "TranslationSample" = Relationship(
         back_populates="contributions", sa_relationship_kwargs={"lazy": "selectin"}
     )
-    translation_evaluation_records: List["TranslationEvaluationRecord"] = Relationship(
-        back_populates="translation_contribution", sa_relationship_kwargs={"cascade": "all, delete-orphan", "lazy": "selectin"}
-    )
-
-
-# ===================== CIRCULATION RECORDS TABLES =====================
-class TranscriptionEvaluationRecord(SQLModel, table=True):
-    __tablename__ = "transcription_evaluation_record"
-    id: uuid.UUID = Field(
-        default_factory=uuid.uuid4,
-        primary_key=True,
-        index=True,
-        nullable=False
-    )
-    transcription_contribution_id: uuid.UUID = Field(foreign_key="transcription_contribution.id")
-    user_id: uuid.UUID = Field(foreign_key="user.id")
-    shown_at: datetime = Field(default_factory=datetime.utcnow)
-
-    # Has the user taken action on this contribution?
-    vote: bool = Field(default=False)
-    rating: int = Field(default=0)  # Rating from 1 to 5
-    skipped: bool = Field(default=False)
-
-    # Relationships with optimized loading
-    transcription_contribution: "TranscriptionContribution" = Relationship(
-        back_populates="transcription_evaluation_records", sa_relationship_kwargs={"lazy": "selectin"}
-    )
-    user: "User" = Relationship(
-        back_populates="transcription_evaluation_records", sa_relationship_kwargs={"lazy": "selectin"}
-    )
-
-
-class TranslationEvaluationRecord(SQLModel, table=True):
-    """Records when a translation contribution is shown to a user for evaluation"""
-    __tablename__ = "translation_evaluation_record"
-    id: uuid.UUID = Field(
-        default_factory=uuid.uuid4,
-        primary_key=True,
-        index=True,
-        nullable=False
-    )
-    translation_contribution_id: uuid.UUID = Field(foreign_key="translation_contribution.id")
-    user_id: uuid.UUID = Field(foreign_key="user.id")
-    shown_at: datetime = Field(default_factory=datetime.utcnow)
-
-    # Has the user taken action on this contribution?
-    vote: bool = Field(default=False)
-    rating: int = Field(default=0)  # Rating from 1 to 5
-    skipped: bool = Field(default=False)
-
-    # Relationships with optimized loading
-    translation_contribution: "TranslationContribution" = Relationship(
-        back_populates="translation_evaluation_records", sa_relationship_kwargs={"lazy": "selectin"}
-    )
-    user: "User" = Relationship(
-        back_populates="translation_evaluation_records", sa_relationship_kwargs={"lazy": "selectin"}
-    )
-
-
-class AnnotationEvaluationRecord(SQLModel, table=True):
-    __tablename__ = "annotation_evaluation_record"
-
-    id: uuid.UUID = Field(
-        default_factory=uuid.uuid4,
-        primary_key=True,
-        index=True
-    )
-    annotation_contribution_id: uuid.UUID = Field(foreign_key="annotation_contribution.id")
-    user_id: uuid.UUID = Field(foreign_key="user.id")
-    shown_at: datetime = Field(default_factory=datetime.utcnow)
-    vote: bool = Field(default=False)
-    rating: int = Field(default=0)  # Rating from 1 to 5
-    skipped: bool = Field(default=False)
-
-    # Relationships with optimized loading
-    annotation_contribution: "AnnotationContribution" = Relationship(
-        back_populates="annotation_evaluation_records", sa_relationship_kwargs={"lazy": "selectin"}
-    )
-    user: "User" = Relationship(
-        back_populates="annotation_evaluation_records", sa_relationship_kwargs={"lazy": "selectin"}
-    )
+    # translation_evaluation_records: List["TranslationEvaluationRecord"] = Relationship(
+    #     back_populates="translation_contribution",
+    #     sa_relationship_kwargs={"cascade": "all, delete-orphan", "lazy": "selectin"}
+    # )
 

@@ -8,8 +8,8 @@ from enum import Enum as PyEnum
 if TYPE_CHECKING:
     from models import (
         TranscriptionContribution, TranslationContribution, AnnotationContribution,
-        TranscriptionEvaluationRecord, TranslationEvaluationRecord, AnnotationEvaluationRecord,
-        ChallengeParticipation, RefreshToken, Language,
+        # TranscriptionEvaluationRecord, TranslationEvaluationRecord, AnnotationEvaluationRecord,
+        # EvaluationStep, ChallengeParticipation, RefreshToken, Language,
         UserMilestone, UserChallengeReward,
     )
 
@@ -41,9 +41,9 @@ class User(SQLModel, table=True):
     role: int = Field(default=1)  # 1: user, 2: admin
 
     # Activity Statistics
-    total_hours_speech: int = Field(default=0)
+    total_hours_speech: float = Field(default=0)
     total_sentences_translated: int = Field(default=0)
-    total_tokens_produced: int = Field(default=0)
+    total_annotation_tokens: int = Field(default=0)
 
     # Timestamps
     created_at: datetime = Field(default_factory=datetime.utcnow)
@@ -61,19 +61,27 @@ class User(SQLModel, table=True):
         back_populates="user", sa_relationship_kwargs={"cascade": "all, delete-orphan", "lazy": "selectin"}
     )
 
-    transcription_evaluation_records: List["TranscriptionEvaluationRecord"] = Relationship(
-        back_populates="user",
-        sa_relationship_kwargs={"cascade": "all, delete-orphan", "lazy": "selectin"}
+    evaluation_steps: List["EvaluationStep"] = Relationship(
+        back_populates="evaluation_branch",
+        sa_relationship_kwargs={
+            "cascade": "all, delete-orphan",
+            "lazy": "selectin"
+        }
     )
 
-    translation_evaluation_records: List["TranslationEvaluationRecord"] = Relationship(
-        back_populates="user",
-        sa_relationship_kwargs={"cascade": "all, delete-orphan", "lazy": "selectin"}
-    )
-    annotation_evaluation_records: List["AnnotationEvaluationRecord"] = Relationship(
-        back_populates="user",
-        sa_relationship_kwargs={"cascade": "all, delete-orphan", "lazy": "selectin"}
-    )
+    # transcription_evaluation_records: List["TranscriptionEvaluationRecord"] = Relationship(
+    #     back_populates="user",
+    #     sa_relationship_kwargs={"cascade": "all, delete-orphan", "lazy": "selectin"}
+    # )
+    #
+    # translation_evaluation_records: List["TranslationEvaluationRecord"] = Relationship(
+    #     back_populates="user",
+    #     sa_relationship_kwargs={"cascade": "all, delete-orphan", "lazy": "selectin"}
+    # )
+    # annotation_evaluation_records: List["AnnotationEvaluationRecord"] = Relationship(
+    #     back_populates="user",
+    #     sa_relationship_kwargs={"cascade": "all, delete-orphan", "lazy": "selectin"}
+    # )
 
     events: List["ChallengeParticipation"] = Relationship(
         back_populates="user", sa_relationship_kwargs={"cascade": "all, delete-orphan", "lazy": "selectin"}
@@ -113,9 +121,11 @@ class UserLanguage(SQLModel, table=True):
 
     proficiency: str = Field(default="beginner")
 
+    ranking: int = Field(default=0) # Ranking in the leaderboard for this language
+
     total_hours_speech: int = Field(default=0)
-    total_words_translated: int = Field(default=0)
-    total_words_annotated: int = Field(default=0)
+    total_sentences_translated: int = Field(default=0)
+    total_annotation_tokens: int = Field(default=0)
 
     # Reputation Metrics
     contribution_count: int = Field(default=0)

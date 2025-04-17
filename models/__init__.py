@@ -4,10 +4,10 @@ from models.language import Language
 from models.data_store import (TranscriptionSample, TranslationSample, TranslationSeedData, AnnotationSample,
                                AnnotationSeedData,
                                )
-from models.contribution import TranscriptionContribution, TranslationContribution, TranslationEvaluationRecord, \
-    TranscriptionEvaluationRecord, AnnotationContribution, AnnotationEvaluationRecord
+from models.contribution import TranscriptionContribution, TranslationContribution, \
+     AnnotationContribution
 from models.challenge import ChallengeParticipation, Challenge, TaskType, ChallengeRule
 from models.model_meta import ModelMetadata
 from models.tokens import RefreshToken
 from models.rewards import UserMilestone, Milestone, ChallengeReward, UserChallengeReward
-from models.branch import EvaluationBranch, EvaluationInstance
+from models.eval import EvaluationBranch, EvaluationInstance, EvaluationStep, ABTest

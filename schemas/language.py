@@ -37,22 +37,25 @@ class LanguageReadDetailed(LanguageRead):
 
 class UserLanguageBase(BaseModel):
     language_id: str
-    total_hours_speech: Optional[int] = 0
+    total_hours_speech: Optional[int] = float
     total_sentences_translated: Optional[int] = 0
+    total_annotation_tokens: Optional[int] = 0
 
 
 class UserLanguageCreate(BaseModel):
     language_id: str
     proficiency: Optional[str] = "Beginner"
-    total_hours_speech: Optional[int] = 0
+    total_hours_speech: Optional[float] = 0
     total_sentences_translated: Optional[int] = 0
+    total_annotation_tokens: Optional[int] = 0
 
     model_config = ConfigDict(from_attributes=True)
 
 
 class UserLanguageUpdate(BaseModel):
-    total_hours_speech: Optional[int] = None
+    total_hours_speech: Optional[float] = None
     total_sentences_translated: Optional[int] = None
+    total_annotation_tokens: Optional[int] = 0
 
 
 # class UserLanguageRead(UserLanguageBase):

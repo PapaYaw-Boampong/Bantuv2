@@ -171,14 +171,3 @@ class LanguageService:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User-Language association not found.")
         return deleted
 
-    async def update_speech_hours(self, user_id: str, language_id: str, hours: int) -> UserLanguage:
-        """
-        Update the total speech hours for a user in a specific language.
-        """
-        return await self.user_language_repository.update_speech_hours(user_id, language_id, hours)
-
-    async def update_sentences_translated(self, user_id: str, language_id: str, sentences: int) -> UserLanguage:
-        """
-        Update the total number of sentences translated for a user in a specific language.
-        """
-        return await self.user_language_repository.update_sentences_translated(user_id, language_id, sentences)
