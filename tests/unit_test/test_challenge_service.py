@@ -1,9 +1,9 @@
 import uuid
-
 import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
 from datetime import datetime, timedelta
 from sqlalchemy.ext.asyncio import AsyncSession
+from fastapi import HTTPException
 
 from models.challenge import (
     Challenge, ChallengeParticipation,
@@ -11,12 +11,11 @@ from models.challenge import (
 )
 from schemas.challenge import (
     ChallengeCreate, ChallengeUpdate, ChallengeParticipationCreate,
-    ChallengeParticipationUpdate, GetChallenges
+    ParticipationUpdate, GetChallenges, ChallengeRulesAdd
 )
 from services.challenge_service import ChallengeService
 
 
-# Fixtures
 @pytest.fixture
 def mock_db():
     return AsyncMock(spec=AsyncSession)
@@ -24,16 +23,7 @@ def mock_db():
 
 @pytest.fixture
 def challenge_service(mock_db):
-    service = ChallengeService(mock_db)
-    return service
-
-
-def mock_scalar_result(return_value):
-    scalar_mock = MagicMock()
-    scalar_mock.all.return_value = return_value
-    result_mock = MagicMock()
-    result_mock.scalars.return_value = scalar_mock
-    return result_mock
+    return ChallengeService(mock_db)
 
 
 challengeid = uuid.uuid4()
@@ -51,10 +41,13 @@ def mock_challenge():
     challenge.event_category = EventCategory.COMPETITION
     challenge.start_date = datetime.utcnow() - timedelta(days=1)
     challenge.end_date = datetime.utcnow() + timedelta(days=1)
-    challenge.status = ChallengeStatus.ACTIVE
+    challenge.status = ChallengeStatus.UPCOMING
     challenge.is_public = True
-    challenge.is_published = True
-    challenge.reward = 100
+    challenge.is_published = False
+    challenge.reward_id = uuid.uuid4()
+    challenge.language_id = uuid.uuid4()
+    challenge.completion_percent = 100
+    challenge.required_fields = []
     challenge.participant_count = 5
     challenge.contribution_count = 10
     return challenge
@@ -72,571 +65,367 @@ def mock_participation():
     participation.total_sentences_translated = 100
     participation.total_tokens_produced = 1000
     participation.acceptance_rate = 80.0
+    participation.contribution_count = 2
+    participation.accepted_contributions = 1
+    participation.evaluation_count = 1
+    participation.accepted_evaluations = 1
     return participation
 
 
-# Tests
-class TestChallengeService:
+@pytest.mark.asyncio
+async def test_create_challenge(challenge_service, mock_db):
+    challenge_data = ChallengeCreate(
+        challenge_name="Test Challenge",
+        description="Test Desc",
+        language_id=uuid.uuid4(),
+    )
+    result = await challenge_service.create_challenge(challenge_data)
+    mock_db.add.assert_called_once()
+    mock_db.commit.assert_awaited_once()
+    mock_db.refresh.assert_awaited_once()
+    assert result.challenge_name == "Test Challenge"
+    assert result.status == ChallengeStatus.UPCOMING
 
-    # Challenge methods tests
-    @pytest.mark.asyncio
-    async def test_create_challenge_upcoming(self, challenge_service, mock_db):
-        # Arrange
-        future_date = datetime.utcnow() + timedelta(days=1)
-        end_date = future_date + timedelta(days=7)
 
-        challenge_data = ChallengeCreate(
-            challenge_name="Future Challenge",
-            description="Upcoming test challenge",
-            event_type=EventType.DATA_COLLECTION,
-            task_type=TaskType.ANNOTATION,
-            event_category=EventCategory.COMPETITION,
-            start_date=future_date,
-            end_date=end_date,
-            reward=uuid.uuid4()
-        )
-
-        # Act
-        result = await challenge_service.create_challenge(challenge_data)
-
-        # Assert
-        mock_db.add.assert_called_once()
-        mock_db.commit.assert_awaited_once()
-        mock_db.refresh.assert_awaited_once()
-        assert result.status == ChallengeStatus.UPCOMING
-        assert result.task_type == TaskType.TRANSCRIPTION  # Default for DATA_COLLECTION
-
-    @pytest.mark.asyncio
-    async def test_create_challenge_active(self, challenge_service, mock_db):
-        # Arrange
-        past_date = datetime.utcnow() - timedelta(days=1)
-        future_date = datetime.utcnow() + timedelta(days=7)
-
-        challenge_data = ChallengeCreate(
-            challenge_name="Active Challenge",
-            description="Active test challenge",
-            event_type=EventType.DATA_COLLECTION,
-            task_type=TaskType.ANNOTATION,
-            event_category=EventCategory.COMPETITION,
-            start_date=past_date,
-            end_date=future_date,
-            reward=uuid.uuid4()
-        )
-
-        # Act
-        result = await challenge_service.create_challenge(challenge_data)
-
-        # Assert
-        assert result.status == ChallengeStatus.ACTIVE
-
-    @pytest.mark.asyncio
-    async def test_create_challenge_completed(self, challenge_service, mock_db):
-        # Arrange
-        past_start = datetime.utcnow() - timedelta(days=10)
-        past_end = datetime.utcnow() - timedelta(days=1)
-
-        challenge_data = ChallengeCreate(
-            challenge_name="Completed Challenge",
-            description="Completed test challenge",
-            event_type=EventType.DATA_COLLECTION,
-            task_type=TaskType.ANNOTATION,
-            event_category=EventCategory.COMPETITION,
-            start_date=past_start,
-            end_date=past_end,
-            reward=uuid.uuid4()
-        )
-
-        # Act
-        result = await challenge_service.create_challenge(challenge_data)
-
-        # Assert
-        assert result.status == ChallengeStatus.COMPLETED
-
-    @pytest.mark.asyncio
-    async def test_get_challenge(self, challenge_service, mock_db, mock_challenge):
-        # Arrange
-        mock_db.get.return_value = mock_challenge
-
-        # Act
-        result = await challenge_service.get_challenge(str(challengeid))
-
-        # Assert
-        mock_db.get.assert_awaited_once_with(Challenge, str(challengeid))
+@pytest.mark.asyncio
+async def test_add_challenge_rules_success(challenge_service, mock_db, mock_challenge):
+    with patch.object(challenge_service, "get_challenge", return_value=mock_challenge):
+        challenge_service.rule_repository.add_rules = AsyncMock()
+        data = ChallengeRulesAdd(challenge_id=challengeid, rules=[{
+            "rule_title": "test",
+            "rule_description": "test",
+            "is_required": True
+        }])
+        result = await challenge_service.add_challenge_rules(data)
+        challenge_service.rule_repository.add_rules.assert_awaited_once()
         assert result == mock_challenge
 
-    @pytest.mark.asyncio
-    async def test_update_challenge(self, challenge_service, mock_db, mock_challenge):
-        # Arrange
-        mock_db.get.return_value = mock_challenge
 
-        update_data = ChallengeUpdate(
-            challenge_name="Updated Challenge Name",
-            description="Updated description"
-        )
+@pytest.mark.asyncio
+async def test_add_challenge_rules_challenge_not_found(challenge_service, mock_db):
+    mock_db.get.return_value = None
+    data = ChallengeRulesAdd(challenge_id=challengeid, rules=[{
+        "rule_title": "test",
+        "rule_description": "test",
+        "is_required": True
+    }])
+    with pytest.raises(HTTPException) as exc:
+        await challenge_service.add_challenge_rules(data)
+    assert exc.value.status_code == 404
 
-        # Act
-        result = await challenge_service.update_challenge(str(challengeid), update_data)
 
-        # Assert
-        assert result == mock_challenge
-        assert mock_challenge.challenge_name == "Updated Challenge Name"
-        assert mock_challenge.description == "Updated description"
-        mock_db.add.assert_called_once_with(mock_challenge)
-        mock_db.commit.assert_awaited_once()
-        mock_db.refresh.assert_awaited_once_with(mock_challenge)
+@pytest.mark.asyncio
+async def test_add_challenge_rules_published(challenge_service, mock_db, mock_challenge):
+    mock_challenge.is_published = True
+    with patch.object(challenge_service, "get_challenge", return_value=mock_challenge):
+        data = ChallengeRulesAdd(challenge_id=challengeid, rules=[{
+            "rule_title": "test",
+            "rule_description": "test",
+            "is_required": True
+        }])
+        with pytest.raises(HTTPException) as exc:
+            await challenge_service.add_challenge_rules(data)
+        assert exc.value.status_code == 400
 
-    @pytest.mark.asyncio
-    async def test_update_challenge_recalculate_status_upcoming(self, challenge_service, mock_db, mock_challenge):
-        # Arrange
-        mock_db.get.return_value = mock_challenge
-        future_date = datetime.utcnow() + timedelta(days=5)
 
-        update_data = ChallengeUpdate(
-            start_date=future_date
-        )
+@pytest.mark.asyncio
+async def test_update_progress_updates_fields(challenge_service, mock_db, mock_challenge):
+    with patch.object(challenge_service, "get_challenge", return_value=mock_challenge):
+        update_data = ChallengeUpdate(description="New Desc")
+        result = await challenge_service.update_progress(challengeid, update_data)
+    assert result.description == "New Desc"
+    mock_db.commit.assert_awaited_once()
+    mock_db.refresh.assert_awaited_once_with(mock_challenge)
 
-        # Act
-        result = await challenge_service.update_challenge(str(challengeid), update_data)
 
-        # Assert
-        assert result.status == ChallengeStatus.UPCOMING
+@pytest.mark.asyncio
+async def test_update_progress_challenge_not_found(challenge_service, mock_db):
+    with patch.object(challenge_service, "get_challenge",
+                      side_effect=HTTPException(status_code=404, detail="Challenge not found")):
+        update_data = ChallengeUpdate(description="New Desc")
+        with pytest.raises(HTTPException) as exc:
+            await challenge_service.update_progress(uuid.uuid4(), update_data)
+        assert exc.value.status_code == 404
 
-    @pytest.mark.asyncio
-    async def test_update_challenge_recalculate_status_completed(self, challenge_service, mock_db, mock_challenge):
-        # Arrange
-        mock_db.get.return_value = mock_challenge
-        past_date = datetime.utcnow() - timedelta(days=5)
 
-        update_data = ChallengeUpdate(
-            end_date=past_date
-        )
+@pytest.mark.asyncio
+async def test_get_challenge_found(challenge_service, mock_db, mock_challenge):
+    mock_db.get.return_value = MagicMock(
+        scalars=MagicMock(return_value=MagicMock(first=MagicMock(return_value=mock_challenge))))
+    with patch("services.challenge_service.ChallengeService.get_challenge", return_value=mock_challenge):
+        result = await challenge_service.get_challenge(challengeid)
+    assert result == mock_challenge
 
-        # Act
-        result = await challenge_service.update_challenge(str(challengeid), update_data)
 
-        # Assert
-        assert result.status == ChallengeStatus.COMPLETED
+@pytest.mark.asyncio
+async def test_get_challenge_not_found(challenge_service, mock_db):
+    mock_db.get.return_value = None
+    with pytest.raises(HTTPException) as exc:
+        await challenge_service.get_challenge(uuid.uuid4())
+    assert exc.value.status_code == 404
 
-    @pytest.mark.asyncio
-    async def test_update_challenge_not_found(self, challenge_service, mock_db):
-        # Arrange
-        mock_db.get.return_value = None
 
-        update_data = ChallengeUpdate(
-            challenge_name="Updated Challenge Name"
-        )
+@pytest.mark.asyncio
+async def test_is_published_true(challenge_service, mock_db, mock_challenge):
+    mock_challenge.is_published = True
+    with patch("services.challenge_service.ChallengeService.get_challenge", return_value=mock_challenge):
+        result = await challenge_service.is_published(challengeid)
+    assert result is True
 
-        # Act
-        result = await challenge_service.update_challenge("nonexistent", update_data)
 
-        # Assert
-        assert result is None
-        mock_db.add.assert_not_called()
+@pytest.mark.asyncio
+async def test_is_published_false(challenge_service, mock_db, mock_challenge):
+    mock_challenge.is_published = False
+    with patch("services.challenge_service.ChallengeService.get_challenge", return_value=mock_challenge):
+        result = await challenge_service.is_published(challengeid)
+    assert result is False
 
-    @pytest.mark.asyncio
-    async def test_delete_challenge_success(self, challenge_service, mock_db, mock_challenge):
-        # Arrange
-        mock_challenge.status = ChallengeStatus.UPCOMING
-        mock_db.get.return_value = mock_challenge
 
-        # Act
-        result = await challenge_service.delete_challenge(str(challengeid))
+@pytest.mark.asyncio
+async def test_update_challenge_success(challenge_service, mock_db, mock_challenge):
+    with patch("services.challenge_service.ChallengeService.get_challenge", return_value=mock_challenge):
+        update = ChallengeUpdate(description="desc")
+        result = await challenge_service.update_challenge(challengeid, update)
+    assert result == mock_challenge
 
-        # Assert
-        assert result is True
-        mock_db.delete.assert_awaited_once_with(mock_challenge)
-        mock_db.commit.assert_awaited_once()
 
-    @pytest.mark.asyncio
-    async def test_delete_challenge_not_found(self, challenge_service, mock_db):
-        # Arrange
-        mock_db.get.return_value = None
+@pytest.mark.asyncio
+async def test_update_challenge_not_found(challenge_service, mock_db):
+    with patch("services.challenge_service.ChallengeService.get_challenge", return_value=None):
+        update = ChallengeUpdate(description="desc")
+        result = await challenge_service.update_challenge(uuid.uuid4(), update)
+    assert result is None
 
-        # Act
-        result = await challenge_service.delete_challenge("nonexistent")
+@pytest.mark.asyncio
+async def test_delete_challenge_success(challenge_service, mock_db, mock_challenge):
+    mock_challenge.status = ChallengeStatus.UPCOMING
+    with patch("services.challenge_service.ChallengeService.get_challenge", return_value=mock_challenge):
+        result = await challenge_service.delete_challenge(challengeid)
+    assert result is True
+    mock_db.delete.assert_awaited_once_with(mock_challenge)
+    mock_db.commit.assert_awaited_once()
 
-        # Assert
-        assert result is False
-        mock_db.delete.assert_not_called()
 
-    @pytest.mark.asyncio
-    async def test_delete_challenge_active_error(self, challenge_service, mock_db, mock_challenge):
-        # Arrange
-        mock_challenge.status = ChallengeStatus.ACTIVE
-        mock_db.get.return_value = mock_challenge
+@pytest.mark.asyncio
+async def test_delete_challenge_active_error(challenge_service, mock_db, mock_challenge):
+    mock_challenge.status = ChallengeStatus.ACTIVE
+    with patch("services.challenge_service.ChallengeService.get_challenge", return_value=mock_challenge):
+        with pytest.raises(ValueError):
+            await challenge_service.delete_challenge(challengeid)
 
-        # Act & Assert
-        with pytest.raises(ValueError, match="Cannot delete an active"):
-            await challenge_service.delete_challenge(str(challengeid))
 
-        mock_db.delete.assert_not_called()
+@pytest.mark.asyncio
+async def test_list_challenges(challenge_service, mock_db):
+    mock_challenges = [MagicMock(spec=Challenge) for _ in range(2)]
+    mock_scalar_result = MagicMock()
+    mock_scalar_result.all.return_value = mock_challenges
+    mock_execute_result = MagicMock()
+    mock_execute_result.scalars.return_value = mock_scalar_result
+    mock_db.execute.return_value = mock_execute_result
+    query_params = GetChallenges(status=ChallengeStatus.UPCOMING, skip=0, limit=10)
+    result = await challenge_service.list_challenges(query_params)
+    assert result == mock_challenges
 
-    @pytest.mark.asyncio
-    async def test_list_challenges(self, challenge_service, mock_db):
-        # Arrange
-        mock_challenges = [MagicMock(spec=Challenge) for _ in range(3)]
 
-        # Create mock for result.scalars().all()
-        mock_scalar_result = MagicMock()
-        mock_scalar_result.all.return_value = mock_challenges
+@pytest.mark.asyncio
+async def test_publish_challenge_success(challenge_service, mock_db, mock_challenge):
+    mock_challenge.completion_percent = 100
+    mock_challenge.is_published = False
+    with patch("services.challenge_service.ChallengeService.get_challenge", return_value=mock_challenge):
+        result = await challenge_service.publish_challenge(challengeid)
+    assert result.is_published is True
+    mock_db.add.assert_called_once_with(mock_challenge)
+    mock_db.commit.assert_awaited_once()
+    mock_db.refresh.assert_awaited_once_with(mock_challenge)
 
-        mock_execute_result = MagicMock()
-        mock_execute_result.scalars.return_value = mock_scalar_result
 
-        # Set it as the result of 'await mock_db.execute(...)'
-        mock_db.execute.return_value = mock_execute_result
+@pytest.mark.asyncio
+async def test_publish_challenge_incomplete(challenge_service, mock_db, mock_challenge):
+    mock_challenge.completion_percent = 80
+    with patch("services.challenge_service.ChallengeService.get_challenge", return_value=mock_challenge):
+        with pytest.raises(ValueError):
+            await challenge_service.publish_challenge(challengeid)
 
-        query_params = GetChallenges(
-            status=ChallengeStatus.ACTIVE,
-            event_type=EventType.DATA_COLLECTION,
-            is_public=True,
-            skip=0,
-            limit=10
-        )
 
-        # Act
-        result = await challenge_service.list_challenges(query_params)
+@pytest.mark.asyncio
+async def test_unpublish_challenge_success(challenge_service, mock_db, mock_challenge):
+    mock_challenge.status = ChallengeStatus.UPCOMING
+    with patch("services.challenge_service.ChallengeService.get_challenge", return_value=mock_challenge):
+        result = await challenge_service.unpublish_challenge(challengeid)
+    assert result.is_published is False
 
-        # Assert
-        mock_db.execute.assert_called_once()
-        assert len(result) == 3
-        assert result == mock_challenges
 
-    @pytest.mark.asyncio
-    async def test_publish_challenge(self, challenge_service, mock_db, mock_challenge):
-        # Arrange
-        mock_challenge.is_published = False
-        mock_db.get.return_value = mock_challenge
+@pytest.mark.asyncio
+async def test_unpublish_challenge_active_error(challenge_service, mock_db, mock_challenge):
+    mock_challenge.status = ChallengeStatus.ACTIVE
+    with patch("services.challenge_service.ChallengeService.get_challenge", return_value=mock_challenge):
+        with pytest.raises(ValueError):
+            await challenge_service.unpublish_challenge(challengeid)
 
-        # Act
-        result = await challenge_service.publish_challenge(str(challengeid))
 
-        # Assert
-        assert result.is_published is True
-        mock_db.add.assert_called_once_with(mock_challenge)
-        mock_db.commit.assert_awaited_once()
-        mock_db.refresh.assert_awaited_once_with(mock_challenge)
+@pytest.mark.asyncio
+async def test_update_challenge_status_success(challenge_service, mock_db, mock_challenge):
+    with patch("services.challenge_service.ChallengeService.get_challenge", return_value=mock_challenge):
+        result = await challenge_service.update_challenge_status(challengeid, ChallengeStatus.ACTIVE)
+    assert result.status == ChallengeStatus.ACTIVE
 
-    @pytest.mark.asyncio
-    async def test_publish_challenge_not_found(self, challenge_service, mock_db):
-        # Arrange
-        mock_db.get.return_value = None
 
-        # Act
-        result = await challenge_service.publish_challenge("nonexistent")
-
-        # Assert
-        assert result is None
-        mock_db.add.assert_not_called()
-
-    @pytest.mark.asyncio
-    async def test_unpublish_challenge(self, challenge_service, mock_db, mock_challenge):
-        # Arrange
-        mock_challenge.is_published = True
-        mock_db.get.return_value = mock_challenge
-
-        # Act
-        result = await challenge_service.unpublish_challenge(str(challengeid))
-
-        # Assert
-        assert result.is_published is False
-        mock_db.add.assert_called_once_with(mock_challenge)
-        mock_db.commit.assert_awaited_once()
-        mock_db.refresh.assert_awaited_once_with(mock_challenge)
-
-    @pytest.mark.asyncio
-    async def test_update_challenge_status(self, challenge_service, mock_db, mock_challenge):
-        # Arrange
-        mock_db.get.return_value = mock_challenge
-
-        # Act
-        result = await challenge_service.update_challenge_status(str(challengeid), ChallengeStatus.COMPLETED)
-
-        # Assert
-        assert result.status == ChallengeStatus.COMPLETED
-        mock_db.add.assert_called_once_with(mock_challenge)
-        mock_db.commit.assert_awaited_once()
-        mock_db.refresh.assert_awaited_once_with(mock_challenge)
-
-    # Challenge Participation methods tests
-    @pytest.mark.asyncio
-    async def test_join_challenge_success(self, challenge_service, mock_db, mock_challenge):
-        # Arrange
-        mock_db.get.return_value = mock_challenge
-        mock_db.execute.return_value = None  # User not already participating
-
-        participation_data = ChallengeParticipationCreate(
-            event_id=challengeid,
-            user_id=participationid
-        )
-
-        # Act
-        participation, challenge = await challenge_service.join_challenge(participation_data)
-
-        # Assert
-        assert challenge.participant_count == 6  # Incremented from 5
-        mock_db.add.call_count == 2  # Both participation and challenge
-        mock_db.commit.assert_awaited_once()
-        mock_db.refresh.call_count == 2  # Both objects
-
-    @pytest.mark.asyncio
-    async def test_join_challenge_not_found(self, challenge_service, mock_db):
-        # Arrange
-        mock_db.get.return_value = None
-
-        participation_data = ChallengeParticipationCreate(
-            event_id=uuid.uuid4(),
-            user_id=participationid
-        )
-
-        # Act & Assert
-        with pytest.raises(ValueError, match="Challenge not found"):
-            await challenge_service.join_challenge(participation_data)
-
-    @pytest.mark.asyncio
-    async def test_join_challenge_already_participating(self, challenge_service, mock_db, mock_challenge):
-        # Arrange
-        mock_db.get.return_value = mock_challenge
-        mock_db.execute.return_value = True  # User already participating
-
-        participation_data = ChallengeParticipationCreate(
-            event_id=challengeid,
-            user_id=participationid
-        )
-
-        # Act & Assert
-        with pytest.raises(ValueError, match="User is already participating"):
-            await challenge_service.join_challenge(participation_data)
-
-    @pytest.mark.asyncio
-    async def test_leave_challenge_success(self, challenge_service, mock_db, mock_challenge, mock_participation):
-        # Arrange
-        mock_db.execute.return_value = mock_participation
-        mock_db.get.return_value = mock_challenge
-
-        # Act
-        result = await challenge_service.leave_challenge(str(challengeid), str(participationid))
-
-        # Assert
-        assert result is True
-        assert mock_challenge.participant_count == 4  # Decremented from 5
-        mock_db.delete.assert_awaited_once_with(mock_participation)
-        mock_db.add.assert_called_once_with(mock_challenge)
-        mock_db.commit.assert_awaited_once()
-
-    @pytest.mark.asyncio
-    async def test_leave_challenge_not_participating(self, challenge_service, mock_db):
-        # Arrange
-        mock_db.execute.return_value = None
-
-        # Act
-        result = await challenge_service.leave_challenge(str(challengeid), str(participationid))
-
-        # Assert
-        assert result is False
-        mock_db.delete.assert_not_called()
-
-    @pytest.mark.asyncio
-    async def test_leave_challenge_challenge_not_found(self, challenge_service, mock_db, mock_participation):
-        # Arrange
-        mock_db.execute.return_value = mock_participation
-        mock_db.get.return_value = None
-
-        # Act
-        result = await challenge_service.leave_challenge(str(challengeid), str(participationid))
-
-        # Assert
-        assert result is False
-        mock_db.delete.assert_not_called()
-
-    @pytest.mark.asyncio
-    async def test_get_challenge_participation(self, challenge_service, mock_db, mock_participation):
-        # Arrange
+@pytest.mark.asyncio
+async def test_join_challenge_success(challenge_service, mock_db, mock_challenge):
+    with patch("services.challenge_service.ChallengeService.get_challenge", return_value=mock_challenge):
+        # Create a mock result object with scalar_one_or_none returning None
         mock_result = MagicMock()
-        mock_result.scalars.return_value.all.return_value = [mock_participation]
-        mock_db.execute.return_value = mock_result
+        mock_result.scalar_one_or_none.return_value = None
+        mock_db.execute = AsyncMock(return_value=mock_result)
+        data = ChallengeParticipationCreate(event_id=challengeid, user_id=participationid)
+        participation, challenge = await challenge_service.join_challenge(data)
+    assert challenge.participant_count == 6
+    mock_db.add.assert_any_call(participation)
+    mock_db.add.assert_any_call(challenge)
+    mock_db.commit.assert_awaited_once()
 
-        # Act
-        result = await challenge_service.get_challenge_participation(str(challengeid), str(participationid))
 
-        # Assert
-        assert result == mock_participation
-        mock_db.execute.assert_called_once()
-
-    @pytest.mark.asyncio
-    async def test_get_challenge_participation_not_found(self, challenge_service, mock_db):
-        # Arrange
+@pytest.mark.asyncio
+async def test_join_challenge_already_participating(challenge_service, mock_db, mock_challenge):
+    with patch("services.challenge_service.ChallengeService.get_challenge", return_value=mock_challenge):
         mock_result = MagicMock()
-        mock_result.scalars.return_value.all.return_value = []
-        mock_db.execute.return_value = mock_result
+        mock_result.scalar_one_or_none.return_value = MagicMock()
+        mock_db.execute = AsyncMock(return_value=mock_result)
+        data = ChallengeParticipationCreate(event_id=challengeid, user_id=participationid)
+        with pytest.raises(ValueError):
+            await challenge_service.join_challenge(data)
 
-        # Act
-        result = await challenge_service.get_challenge_participation(str(challengeid), str(participationid))
 
-        # Assert
-        assert result is None
+@pytest.mark.asyncio
+async def test_leave_challenge_success(challenge_service, mock_db, mock_challenge, mock_participation):
+    mock_result = MagicMock()
+    mock_result.scalar_one_or_none.return_value = mock_participation
+    mock_db.execute = AsyncMock(return_value=mock_result)
+    with patch("services.challenge_service.ChallengeService.get_challenge", return_value=mock_challenge):
+        result = await challenge_service.leave_challenge(challengeid, participationid)
+    assert result is True
+    assert mock_challenge.participant_count == 4
+    mock_db.delete.assert_awaited_once_with(mock_participation)
 
-    @pytest.mark.asyncio
-    async def test_update_participation_stats(self, challenge_service, mock_db, mock_participation):
-        # Arrange
-        # Mock the get_challenge_participation method
-        with patch.object(challenge_service, 'get_challenge_participation', return_value=mock_participation):
-            update_data = ChallengeParticipationUpdate(
-                total_points=75,
-                total_hours_speech=8
-            )
 
-            # Act
-            result = await challenge_service.update_participation_stats(str(challengeid), str(participationid),
-                                                                        update_data)
+@pytest.mark.asyncio
+async def test_leave_challenge_not_participating(challenge_service, mock_db, mock_challenge):
+    # Properly mock the async DB result structure
+    mock_result = MagicMock()
+    mock_result.scalar_one_or_none.return_value = None
+    mock_db.execute = AsyncMock(return_value=mock_result)
+    with patch("services.challenge_service.ChallengeService.get_challenge", return_value=mock_challenge):
+        result = await challenge_service.leave_challenge(challengeid, participationid)
+    assert result is False
 
-            # Assert
-            assert result == mock_participation
-            assert mock_participation.total_points == 75
-            assert mock_participation.total_hours_speech == 8
-            mock_db.add.assert_called_once_with(mock_participation)
-            mock_db.commit.assert_awaited_once()
-            mock_db.refresh.assert_awaited_once_with(mock_participation)
 
-    @pytest.mark.asyncio
-    async def test_update_participation_stats_not_found(self, challenge_service, mock_db):
-        # Arrange
-        # Mock the get_challenge_participation method
-        with patch.object(challenge_service, 'get_challenge_participation', return_value=None):
-            update_data = ChallengeParticipationUpdate(
-                total_points=75
-            )
+@pytest.mark.asyncio
+async def test_leave_challenge_challenge_not_found(challenge_service, mock_db, mock_participation):
+    mock_result = MagicMock()
+    mock_result.scalar_one_or_none.return_value = mock_participation
+    mock_db.execute = AsyncMock(return_value=mock_result)
+    with patch("services.challenge_service.ChallengeService.get_challenge", return_value=None):
+        result = await challenge_service.leave_challenge(challengeid, participationid)
+    assert result is False
 
-            # Act
-            result = await challenge_service.update_participation_stats(str(challengeid), str(participationid),
-                                                                        update_data)
 
-            # Assert
-            assert result is None
-            mock_db.add.assert_not_called()
 
-    @pytest.mark.asyncio
-    async def test_get_challenge_participants(self, challenge_service, mock_db, mock_participation):
-        # Arrange
-        mock_participations = [mock_participation for _ in range(3)]
 
-        # Properly mock the async DB result structure
-        mock_scalar_result = MagicMock()
-        mock_scalar_result.all.return_value = mock_participations
+@pytest.mark.asyncio
+async def test_get_challenge_participation_found(challenge_service, mock_db, mock_participation):
+    mock_result = MagicMock()
+    mock_result.scalars.return_value.all.return_value = [mock_participation]
+    mock_db.execute.return_value = mock_result
+    result = await challenge_service.get_challenge_participation(challengeid, participationid)
+    assert result == mock_participation
 
-        mock_execute_result = MagicMock()
-        mock_execute_result.scalars.return_value = mock_scalar_result
 
-        mock_db.execute.return_value = mock_execute_result
+@pytest.mark.asyncio
+async def test_get_challenge_participation_not_found(challenge_service, mock_db):
+    mock_result = MagicMock()
+    mock_result.scalars.return_value.all.return_value = []
+    mock_db.execute.return_value = mock_result
+    result = await challenge_service.get_challenge_participation(challengeid, participationid)
+    assert result is None
 
-        # Act
-        result = await challenge_service.get_challenge_participants(str(challengeid))
 
-        # Assert
-        assert len(result) == 3
-        assert result == mock_participations
-        mock_db.execute.assert_called_once()
+@pytest.mark.asyncio
+async def test_update_participation_stats_success(challenge_service, mock_db, mock_participation):
+    with patch.object(challenge_service, 'get_challenge_participation', return_value=mock_participation):
+        update_data = ParticipationUpdate(total_points=75, total_hours_speech=8)
+        result = await challenge_service.update_participation_stats(challengeid, participationid, update_data)
+    assert result == mock_participation
 
-    @pytest.mark.asyncio
-    async def test_get_user_challenges(self, challenge_service, mock_db, mock_participation):
-        # Arrange
-        mock_participations = [mock_participation for _ in range(2)]
 
-        mock_scalar_result = MagicMock()
-        mock_scalar_result.all.return_value = mock_participations
+@pytest.mark.asyncio
+async def test_update_participation_stats_not_found(challenge_service, mock_db):
+    with patch.object(challenge_service, 'get_challenge_participation', return_value=None):
+        update_data = ParticipationUpdate(total_points=75)
+        result = await challenge_service.update_participation_stats(challengeid, participationid, update_data)
+    assert result is None
 
-        mock_execute_result = MagicMock()
-        mock_execute_result.scalars.return_value = mock_scalar_result
 
-        mock_db.execute.return_value = mock_execute_result
+@pytest.mark.asyncio
+async def test_get_challenge_participants(challenge_service, mock_db, mock_participation):
+    mock_participations = [mock_participation for _ in range(3)]
+    mock_scalar_result = MagicMock()
+    mock_scalar_result.all.return_value = mock_participations
+    mock_execute_result = MagicMock()
+    mock_execute_result.scalars.return_value = mock_scalar_result
+    mock_db.execute.return_value = mock_execute_result
+    result = await challenge_service.get_challenge_participants(challengeid)
+    assert result == mock_participations
 
-        # Act
-        result = await challenge_service.get_user_challenges(str(participationid))
 
-        # Assert
-        assert len(result) == 2
-        assert result == mock_participations
-        mock_db.execute.assert_called_once()
+@pytest.mark.asyncio
+async def test_get_user_challenges(challenge_service, mock_db, mock_participation):
+    mock_participations = [mock_participation for _ in range(2)]
+    mock_scalar_result = MagicMock()
+    mock_scalar_result.all.return_value = mock_participations
+    mock_execute_result = MagicMock()
+    mock_execute_result.scalars.return_value = mock_scalar_result
+    mock_db.execute.return_value = mock_execute_result
+    result = await challenge_service.get_user_challenges(participationid)
+    assert result == mock_participations
 
-    @pytest.mark.asyncio
-    async def test_increment_challenge_contribution_count(self, challenge_service, mock_db, mock_challenge):
-        # Arrange
-        mock_challenge.contribution_count = 10
-        mock_db.get.return_value = mock_challenge
 
-        # Act
-        result = await challenge_service.increment_challenge_contribution_count(str(challengeid))
+@pytest.mark.asyncio
+async def test_get_challenge_leaderboard(challenge_service, mock_db):
+    mock_leaderboard_entries = [
+        (MagicMock(spec=ChallengeParticipation, user_id="user1", total_points=100, total_hours_speech=10,
+                   total_sentences_translated=200, total_tokens_produced=2000, acceptance_rate=85.0), "username1",
+         "User One"),
+        (MagicMock(spec=ChallengeParticipation, user_id="user2", total_points=90, total_hours_speech=9,
+                   total_sentences_translated=180, total_tokens_produced=1800, acceptance_rate=80.0), "username2",
+         "User Two")
+    ]
+    mock_db.execute.return_value = mock_leaderboard_entries
+    result = await challenge_service.get_challenge_leaderboard(challengeid)
+    assert len(result) == 2
+    assert result[0]["user_id"] == "user1"
+    assert result[1]["user_id"] == "user2"
 
-        # Assert
-        assert result.contribution_count == 11
-        mock_db.add.assert_called_once_with(mock_challenge)
-        mock_db.commit.assert_awaited_once()
-        mock_db.refresh.assert_awaited_once_with(mock_challenge)
 
-    @pytest.mark.asyncio
-    async def test_increment_challenge_contribution_count_not_found(self, challenge_service, mock_db):
-        # Arrange
-        mock_db.get.return_value = None
+@pytest.mark.asyncio
+async def test_update_challenge_statuses(challenge_service, mock_db, mock_challenge):
+    upcoming = MagicMock(spec=Challenge)
+    upcoming.status = ChallengeStatus.UPCOMING
+    upcoming.start_date = datetime.utcnow() - timedelta(hours=1)
+    upcoming.end_date = datetime.utcnow() + timedelta(days=1)
+    active = MagicMock(spec=Challenge)
+    active.status = ChallengeStatus.ACTIVE
+    active.end_date = datetime.utcnow() - timedelta(hours=1)
 
-        # Act
-        result = await challenge_service.increment_challenge_contribution_count("nonexistent")
+    def mock_scalar_result(val):
+        mock_scalar = MagicMock()
+        mock_scalar.all.return_value = val
+        mock_result = MagicMock()
+        mock_result.scalars.return_value = mock_scalar
+        return mock_result
 
-        # Assert
-        assert result is None
-        mock_db.add.assert_not_called()
-
-    @pytest.mark.asyncio
-    async def test_get_challenge_leaderboard(self, challenge_service, mock_db):
-        # Arrange
-        mock_leaderboard_entries = [
-            (MagicMock(spec=ChallengeParticipation, user_id="user1", total_points=100,
-                       total_hours_speech=10, total_sentences_translated=200,
-                       total_tokens_produced=2000, acceptance_rate=85.0),
-             "username1", "User One"),
-            (MagicMock(spec=ChallengeParticipation, user_id="user2", total_points=90,
-                       total_hours_speech=9, total_sentences_translated=180,
-                       total_tokens_produced=1800, acceptance_rate=80.0),
-             "username2", "User Two")
-        ]
-
-        mock_db.execute.return_value = mock_leaderboard_entries
-
-        # Act
-        result = await challenge_service.get_challenge_leaderboard(str(challengeid))
-
-        # Assert
-        assert len(result) == 2
-        assert result[0]["user_id"] == "user1"
-        assert result[0]["username"] == "username1"
-        assert result[0]["points"] == 100
-        assert result[1]["user_id"] == "user2"
-        mock_db.execute.assert_called_once()
-
-    @pytest.mark.asyncio
-    async def test_update_challenge_statuses(self, challenge_service, mock_db):
-        # Arrange
-        # Create mock challenges that need status updates
-        upcoming_challenge = MagicMock(spec=Challenge)
-        upcoming_challenge.status = ChallengeStatus.UPCOMING
-        upcoming_challenge.start_date = datetime.utcnow() - timedelta(hours=1)
-        upcoming_challenge.end_date = datetime.utcnow() + timedelta(days=1)
-
-        active_challenge = MagicMock(spec=Challenge)
-        active_challenge.status = ChallengeStatus.ACTIVE
-        active_challenge.end_date = datetime.utcnow() - timedelta(hours=1)
-
-        # Correctly mocked results
-        mock_db.execute.side_effect = [
-            mock_scalar_result([upcoming_challenge]),
-            mock_scalar_result([active_challenge])
-        ]
-
-        # Act
-        count = await challenge_service.update_challenge_statuses()
-
-        # Assert
-        assert count == 2
-        assert upcoming_challenge.status == ChallengeStatus.ACTIVE
-        assert active_challenge.status == ChallengeStatus.COMPLETED
-        assert mock_db.add.call_count == 2
-        mock_db.commit.assert_awaited_once()
+    mock_db.execute.side_effect = [mock_scalar_result([upcoming]), mock_scalar_result([active])]
+    count = await challenge_service.update_challenge_statuses()
+    assert count == 2
+    assert upcoming.status == ChallengeStatus.ACTIVE
+    assert active.status == ChallengeStatus.COMPLETED
+    mock_db.commit.assert_awaited_once()

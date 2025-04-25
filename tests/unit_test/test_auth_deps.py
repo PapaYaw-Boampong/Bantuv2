@@ -1,0 +1,68 @@
+import warnings
+import pytest
+from unittest.mock import AsyncMock, MagicMock, patch
+from fastapi import HTTPException, status
+
+# Suppress Pydantic deprecation warnings
+warnings.filterwarnings("ignore", category=DeprecationWarning)
+
+from api.v1 import deps
+
+
+@pytest.mark.asyncio
+async def test_get_current_user_success():
+    mock_db = AsyncMock()
+    mock_token = "valid.token"
+    mock_payload = {"sub": "user_id"}
+    mock_user = MagicMock()
+
+    with patch("api.v1.deps.TokenService") as MockTokenService, \
+            patch("api.v1.deps.UserService") as MockUserService:
+        MockTokenService.return_value.decode_token.return_value = mock_payload
+        MockUserService.return_value.get_detailed_user_by_id = AsyncMock(return_value=mock_user)
+
+        user = await deps.get_current_user(db=mock_db, token=mock_token)
+        assert user == mock_user
+
+
+@pytest.mark.asyncio
+async def test_get_current_user_invalid_token():
+    mock_db = AsyncMock()
+    mock_token = "invalid.token"
+
+    with patch("api.v1.deps.TokenService") as MockTokenService:
+        MockTokenService.return_value.decode_token.side_effect = HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED
+        )
+        with pytest.raises(HTTPException) as exc_info:
+            await deps.get_current_user(db=mock_db, token=mock_token)
+        assert exc_info.value.status_code == status.HTTP_401_UNAUTHORIZED
+
+
+@pytest.mark.asyncio
+async def test_get_current_user_no_user_id():
+    mock_db = AsyncMock()
+    mock_token = "valid.token"
+    mock_payload = {}
+
+    with patch("api.v1.deps.TokenService") as MockTokenService:
+        MockTokenService.return_value.decode_token.return_value = mock_payload
+        with pytest.raises(HTTPException) as exc_info:
+            await deps.get_current_user(db=mock_db, token=mock_token)
+        assert exc_info.value.status_code == status.HTTP_401_UNAUTHORIZED
+
+
+@pytest.mark.asyncio
+async def test_get_current_user_user_not_found():
+    mock_db = AsyncMock()
+    mock_token = "valid.token"
+    mock_payload = {"sub": "user_id"}
+
+    with patch("api.v1.deps.TokenService") as MockTokenService, \
+            patch("api.v1.deps.UserService") as MockUserService:
+        MockTokenService.return_value.decode_token.return_value = mock_payload
+        MockUserService.return_value.get_detailed_user_by_id = AsyncMock(return_value=None)
+
+        with pytest.raises(HTTPException) as exc_info:
+            await deps.get_current_user(db=mock_db, token=mock_token)
+        assert exc_info.value.status_code == status.HTTP_404_NOT_FOUND

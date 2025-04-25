@@ -1,8 +1,9 @@
+import uuid
 from typing import List, Optional, Dict, Any
 from fastapi import HTTPException, status
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
-from crud.language import LanguageCrud, UserLanguageCrud
+from crud.language import LanguageCrud, UserLanguageCrud, UserLanguageStatsCrud
 from datetime import datetime
 from models.language import Language
 from models.user import UserLanguage
@@ -13,6 +14,7 @@ class LanguageService:
         self.db = db
         self.language_repository = LanguageCrud(db)
         self.user_language_repository = UserLanguageCrud(db)
+        self.user_language_stats_repository = UserLanguageStatsCrud(db)
 
     # --- Language Related Operations ---
     async def create_language(self, language_data: Dict[str, Any]) -> Language:
@@ -27,19 +29,28 @@ class LanguageService:
 
     async def get_language(self, term: str) -> Optional[Language]:
         """
-        Retrieve a language by ID, code, or name.
+        Retrieve a language by UUID, ISO code, or name.
+        Priority: UUID > Code (3-letter) > Name
         """
-        if term.isdigit():  # assume ID is numeric
-            language = await self.language_repository.get_by_id(term)
-        elif len(term) == 3:  # assume code is 3-letter ISO code
-            language = await self.language_repository.get_by_code(term)
-        else:  # assume name
-            language = await self.language_repository.get_by_name(term)
+        language = None
+
+        # Try to parse as UUID
+        try:
+            language_id = uuid.UUID(term.strip())
+            language = await self.language_repository.get_by_id(language_id)
+        except ValueError:
+            pass  # Not a UUID, proceed to check code or name
+
+        # If not found by UUID and it's a 3-letter code
+        if not language and len(term) == 3 and term.isalpha():
+            language = await self.language_repository.get_by_code(term.lower())
+
+        # If still not found, try by name
+        if not language:
+            language = await self.language_repository.get_by_name(term.strip())
 
         if not language:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Language not found.")
-
-        language.id = str(language.id)  # Convert ID to string for API response
 
         return language
 
@@ -85,46 +96,48 @@ class LanguageService:
         language.id = str(language.id)
         return language
 
-    async def reactivate_language(self, language_id: str) -> Language:
-        language = await self.language_repository.get_by_id(language_id)
-        if not language:
-            raise HTTPException(status_code=404, detail="Language not found")
+    async def activate_language(self, language_id: str) -> bool:
 
-        if language.is_active:
-            raise HTTPException(status_code=400, detail="Language is already active")
+        try:
+            language_id = uuid.UUID(language_id.strip())
+        except ValueError:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid language ID format.")
 
-        return await self.language_repository.update(
+        return await self.language_repository.update_activation_status(
             language_id,
-            {"is_active": True, "deactivated_at": None}
+            True,
+            state="active"
         )
 
     async def deactivate_language(self, language_id: str) -> bool:
-        language = await self.language_repository.get_by_id(language_id)
-        if not language:
-            raise HTTPException(status_code=404, detail="Language not found")
 
-        if not language.is_active:
-            raise HTTPException(status_code=400, detail="Language is already deactivated")
+        try:
+            language_id = uuid.UUID(language_id.strip())
+        except ValueError:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid language ID format.")
 
-        result = await self.language_repository.update(
+        return await self.language_repository.update_activation_status(
             language_id,
-            {"is_active": False, "deactivated_at": datetime.utcnow()}
+            False,
+            state="inactive"
         )
-        if not result:
-            raise HTTPException(status_code=400, detail="Failed to deactivate language")
-
-        return True
 
     # --- User-Language Related Operations ---
-
     async def add_user_language(self, user_id: str, language_id: str, proficiency: str) -> dict:
         """
         Associate a user with a language.
         """
+
         try:
-            pair = await self.user_language_repository.create({"user_id": user_id, "language_id": language_id, "proficiency":proficiency})
+            language_id = uuid.UUID(language_id.strip())
+        except ValueError:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid language ID format.")
+
+        try:
+            pair = await self.user_language_repository.create(
+                {"user_id": user_id, "language_id": language_id, "proficiency": proficiency})
             if pair:
-                entry = await self.user_language_repository.get_by_id(str(pair.id))
+                entry = await self.user_language_repository.get_by_id(pair.id)
 
                 language_data = {
                     "association_id": str(entry.id),  # The UserLanguage ID
@@ -142,7 +155,7 @@ class LanguageService:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST,
                                 detail="A language with this code already exists.")
 
-    async def get_user_languages(self, user_id: str, skip: int = 0, limit: int = 100) -> List[dict]:
+    async def get_user_languages(self, user_id: uuid.UUID, skip: int = 0, limit: int = 100) -> List[dict]:
         """
         Get all languages associated with a user.
         """
@@ -166,8 +179,11 @@ class LanguageService:
         """
         Remove a language from a user.
         """
-        deleted = await self.user_language_repository.delete(user_language_id)
+        try:
+            pair_id = uuid.UUID(user_language_id.strip())
+        except ValueError:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid language ID format.")
+        deleted = await self.user_language_repository.delete(pair_id)
         if not deleted:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User-Language association not found.")
         return deleted
-

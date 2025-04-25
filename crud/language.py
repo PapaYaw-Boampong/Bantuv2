@@ -2,10 +2,18 @@ from typing import List, Optional, Dict, Any
 from sqlmodel import select
 from sqlalchemy.orm import joinedload
 from models.language import Language
-from models.user import UserLanguage
+from models.user import UserLanguage, UserLanguageStats
 from sqlalchemy.ext.asyncio import AsyncSession
 from datetime import datetime
 from uuid import UUID
+from fastapi import HTTPException, status
+
+PROFICIENCY_LEVELS = {
+    "beginner": 3.0,
+    "intermediate": 5.0,
+    "advanced": 7.0,
+    "native": 8.0,
+}
 
 
 class LanguageCrud:
@@ -94,6 +102,24 @@ class LanguageCrud:
         await self.db.refresh(language)
         return language
 
+    async def update_activation_status(self, language_id: UUID, is_active: bool, state: str) -> bool:
+        """
+        Update only the activation status of a language and return success status.
+        """
+        language = await self.get_by_id(language_id)
+        if not language:
+            raise HTTPException(status_code=404, detail="Language not found")
+
+        if language.is_active and is_active or not language.is_active and not is_active:
+            raise HTTPException(status_code=400, detail=f"Language is already in the requested state: {state} ")
+
+        language.is_active = is_active
+        language.updated_at = datetime.utcnow()
+
+        self.db.add(language)
+        await self.db.commit()
+        return True
+
 
 class UserLanguageCrud:
     def __init__(self, db: AsyncSession):
@@ -121,14 +147,13 @@ class UserLanguageCrud:
         result = await self.db.execute(statement)
         return result.scalars().first()
 
-    async def get_by_user_and_language(self, user_id: UUID, language_id: UUID, task_type: str) -> Optional[UserLanguage]:
+    async def get_by_user_and_language(self, user_id: UUID, language_id: UUID) -> Optional[UserLanguage]:
         """
         Get a user-language relationship by user ID and language ID (ASYNC)
         """
         statement = (
             select(UserLanguage)
             .where(UserLanguage.user_id == user_id, UserLanguage.language_id == language_id)
-            .where(UserLanguage.task_type == task_type)  # filter for task type
         )
         result = await self.db.execute(statement)
         return result.scalars().first()
@@ -167,107 +192,16 @@ class UserLanguageCrud:
         await self.db.commit()
         return True
 
-    async def update_speech_hours(self, user_id: UUID, language_id: UUID, hours: float, task_type: str) -> UserLanguage:
-        """
-        Update speech hours for a user-language relationship (ASYNC)
-        """
-        user_language = await self.get_by_user_and_language(user_id, language_id, task_type)
-
-        if not user_language:
-            user_language = await self.create({
-                "user_id": user_language.user_id,
-                "language_id": user_language.language_id,
-                "total_hours_speech": hours,
-                "total_sentences_translated": 0,
-                "total_annotation_tokens": 0
-            })
-        else:
-            user_language.total_hours_speech += hours
-            self.db.add(user_language)
-            await self.db.commit()
-            await self.db.refresh(user_language)
-
-        return user_language
-
-    async def update_sentences_translated(self, user_id: UUID, language_id: UUID, sentences: int,
-                                          task_type: str) -> UserLanguage:
-        """
-        Update sentences translated for a user-language relationship (ASYNC)
-        """
-        user_language = await self.get_by_user_and_language(user_id, language_id, task_type)
-
-        if not user_language:
-            user_language = await self.create({
-                "user_id": user_language.user_id,
-                "language_id": user_language.language_id,
-                "total_hours_speech": 0,
-                "total_sentences_translated": sentences,
-                "total_annotation_tokens": 0
-            })
-        else:
-            user_language.total_sentences_translated += sentences
-            self.db.add(user_language)
-            await self.db.commit()
-            await self.db.refresh(user_language)
-
-        return user_language
-
-    async def update_annotation_tokens(self, user_id: UUID, language_id: UUID, tokens: int,
-                                       task_type: str) -> UserLanguage:
-        """
-        Update annotation tokens for a user-language relationship (ASYNC)
-        """
-        user_language = await self.get_by_user_and_language(user_id, language_id, task_type)
-
-        if not user_language:
-            user_language = await self.create({
-                "user_id": user_id,
-                "language_id": language_id,
-                "total_hours_speech": 0,
-                "total_sentences_translated": 0,
-                "total_annotation_tokens": tokens
-            })
-        else:
-            user_language.total_annotation_tokens += tokens
-            self.db.add(user_language)
-            await self.db.commit()
-            await self.db.refresh(user_language)
-
-        return user_language
-
     async def update_stats(
             self,
             user_language: UserLanguage,
             hours: int = 0,
             sentences: int = 0,
             tokens: int = 0,
-            is_contribution: bool = False,
-            is_evaluation: bool = False,
-            accepted: bool = False
     ) -> UserLanguage:
         user_language.total_hours_speech += hours
         user_language.total_sentences_translated += sentences
         user_language.total_annotation_tokens += tokens
-
-        if is_contribution:
-            user_language.contribution_count += 1
-            if accepted:
-                user_language.accepted_contributions += 1
-
-        if is_evaluation:
-            user_language.evaluation_count += 1
-            if accepted:
-                user_language.accepted_evaluations += 1
-
-        # Update scores
-        if user_language.contribution_count:
-            user_language.contribution_acceptance_score = (
-                    user_language.accepted_contributions / user_language.contribution_count
-            )
-        if user_language.evaluation_count:
-            user_language.evaluation_acceptance_score = (
-                    user_language.accepted_evaluations / user_language.evaluation_count
-            )
 
         await self.db.commit()
         await self.db.refresh(user_language)
@@ -277,11 +211,10 @@ class UserLanguageCrud:
             self,
             language_id: UUID,
             user_id: UUID,
-            task_type: str,
             stats_data: dict
     ) -> Optional[UserLanguage]:
 
-        user_language = await self.get_by_user_and_language(user_id, language_id, task_type)
+        user_language = await self.get_by_user_and_language(user_id, language_id)
 
         if not user_language:
             raise ValueError("UserLanguage not found")
@@ -289,16 +222,131 @@ class UserLanguageCrud:
         hours = stats_data.get("hours", 0)
         sentences = stats_data.get("sentences", 0)
         tokens = stats_data.get("tokens", 0)
-        is_contribution = stats_data.get("is_contribution", False)
-        is_evaluation = stats_data.get("is_evaluation", False)
-        accepted = stats_data.get("accepted", False)
 
         return await self.update_stats(
             user_language,
             hours=hours,
             sentences=sentences,
-            tokens=tokens,
+            tokens=tokens
+        )
+
+
+class UserLanguageStatsCrud:
+    def __init__(self, db: AsyncSession):
+        self.db = db
+
+    async def create(self, user_language_stats_data: Dict[str, Any]) -> UserLanguageStats:
+        """
+        Create a user-language relationship (ASYNC)
+        """
+        user_language_stats = UserLanguageStats(**user_language_stats_data)
+        self.db.add(user_language_stats)
+        await self.db.commit()
+        await self.db.refresh(user_language_stats)
+        return user_language_stats
+
+    async def get_by_id(self, user_language_stats_id: UUID) -> Optional[UserLanguageStats]:
+        """
+        Get a user-language relationship by ID (ASYNC)
+        """
+        statement = (
+            select(UserLanguageStats)
+            .where(UserLanguageStats.id == user_language_stats_id)
+        )
+        result = await self.db.execute(statement)
+        return result.scalars().first()
+
+    async def get_by_user_and_language_task_type(self, user_id: UUID, language_id: UUID, task_type: str
+                                                 ) -> Optional[UserLanguageStats]:
+        """
+        Get a user-language relationship by user ID, language ID, and task type (ASYNC)
+        """
+        statement = (
+            select(UserLanguageStats)
+            .where(UserLanguageStats.user_language_id == user_id,
+                   UserLanguageStats.language_id == language_id,
+                   UserLanguageStats.task_type == task_type)
+        )
+        result = await self.db.execute(statement)
+        return result.scalars().first()
+
+    async def update_proficiency(
+            self,
+            user_language_stats_id: UUID,
+            proficiency: float
+    ) -> UserLanguageStats:
+        user_language_stats = await self.get_by_id(user_language_stats_id)
+        if not user_language_stats:
+            raise ValueError("user stats not found")
+        user_language_stats.proficiency = proficiency
+        user_language_stats.updated_at = datetime.utcnow()
+
+        self.db.add(user_language_stats)
+        await self.db.commit()
+        await self.db.refresh(user_language_stats)
+        return user_language_stats
+
+    async def update_stats(
+            self,
+            user_language_stats: UserLanguageStats,
+            is_contribution: bool = False,
+            is_evaluation: bool = False,
+            accepted: bool = False
+    ) -> UserLanguageStats:
+        if is_contribution:
+            user_language_stats.contribution_count += 1
+            if accepted:
+                user_language_stats.accepted_contributions += 1
+            # Update scores
+            if user_language_stats.contribution_count:
+                user_language_stats.contribution_acceptance_score = (
+                        user_language_stats.accepted_contributions / user_language_stats.contribution_count
+                )
+
+        if is_evaluation:
+            user_language_stats.evaluation_count += 1
+            if accepted:
+                user_language_stats.accepted_evaluations += 1
+
+            if user_language_stats.evaluation_count:
+                user_language_stats.evaluation_acceptance_score = (
+                        user_language_stats.accepted_evaluations / user_language_stats.evaluation_count
+                )
+
+        await self.db.commit()
+        await self.db.refresh(user_language_stats)
+        return user_language_stats
+
+    async def update_language_stats(
+            self,
+            language_id: UUID,
+            user_id: UUID,
+            task_type: str,
+            stats_data: dict
+    ) -> Optional[UserLanguageStats]:
+
+        user_language_stats = await self.get_by_user_and_language_task_type(user_id, language_id, task_type)
+        if not user_language_stats:
+            user_language = await UserLanguageCrud(self.db).get_by_user_and_language(user_id, language_id)
+            if not user_language:
+                raise ValueError("UserLanguage not found")
+
+            await self.create({
+                "user_language_id": user_language.id,
+                "task_type": task_type,
+                "proficiency": PROFICIENCY_LEVELS.get(user_language.proficiency, 3.0),
+            })
+
+        is_contribution = stats_data.get("is_contribution", False)
+        is_evaluation = stats_data.get("is_evaluation", False)
+        accepted = stats_data.get("accepted", False)
+
+        return await self.update_stats(
+            user_language_stats,
             is_contribution=is_contribution,
             is_evaluation=is_evaluation,
             accepted=accepted,
         )
+
+
+

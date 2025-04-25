@@ -6,6 +6,7 @@ import random
 
 import json
 
+from core.config import settings
 from models import (
 
     EvaluationBranch,
@@ -50,10 +51,10 @@ def prioritize_branches(
     def relative_depth(b: EvaluationBranch):
         return len(b.evaluation_steps) / (b.max_depth or 1)
 
-    reverse = proficiency >= 7
+    reverse = proficiency >= settings.EVALUATOR_PROFICIENCY_THRESHOLD
     sorted_branches = sorted(branches, key=relative_depth, reverse=reverse)
 
-    if proficiency < 7:
+    if proficiency < settings.EVALUATOR_PROFICIENCY_THRESHOLD:
         shallow_enough = [b for b in sorted_branches if relative_depth(b) <= threshold]
         return shallow_enough
 

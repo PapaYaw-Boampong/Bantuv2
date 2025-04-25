@@ -52,6 +52,13 @@ class UserLanguageCreate(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
 
+class UserLanguageStatsCreate(BaseModel):
+    user_language_id: str
+    total_hours_speech: Optional[int] = float
+    total_sentences_translated: Optional[int] = 0
+    total_annotation_tokens: Optional[int] = 0
+
+
 class UserLanguageUpdate(BaseModel):
     total_hours_speech: Optional[float] = None
     total_sentences_translated: Optional[int] = None

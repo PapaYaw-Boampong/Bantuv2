@@ -3,8 +3,8 @@ from typing import Dict, List, Optional, Union, Tuple, Any
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func, desc, or_, and_, update
 from sqlalchemy.orm import selectinload
-from datetime import datetime, timedelta
-
+from datetime import datetime, timedelta, timezone
+import random
 from core.config import settings
 from models import (
     EvaluationInstance,
@@ -17,11 +17,16 @@ from models import (
     TranslationSample,
     TranscriptionSample,
     AnnotationSample,
-    User
+    ABTestPair,
+    ABTestVote,
 )
 
 from schemas.contribution import (
     ContributionFilter,
+)
+
+from schemas.challenge import (
+    ParticipationUpdate,
 )
 
 # Helper Methods
@@ -29,10 +34,6 @@ from utils.eval_service_utils import (
     filter_user_participated,
     prioritize_branches,
     is_expired,
-    create_pairs,
-    create_stage,
-    get_active_stage,
-    tally_pair_votes
 )
 
 
@@ -242,11 +243,11 @@ class EvaluationService:
         language_service = LanguageService(self.db)
         from services.challenge_service import ChallengeService
 
-        eval_stats = {
-            "is_evaluation": True,
-            "evaluation_count": 1,
-            "points": settings.EVALUATION_POINTS,
-        }
+        eval_stats = ParticipationUpdate(
+            is_evaluation=True,
+            points=settings.EVALUATION_POINTS,
+        )
+
         # Update challenge participation stats
         if branch.event_id:
             challenge_service = ChallengeService(self.db)
@@ -299,6 +300,9 @@ class EvaluationService:
         if all_complete and not instance.is_complete:
             instance.is_complete = True
             await self.db.commit()
+
+            # Evaluate Users for their contributions
+            # assigns points to users based on
 
             # If A/B test is required, initialize it
             if instance.ab_test:
@@ -469,7 +473,7 @@ class EvaluationService:
                 selectinload(EvaluationBranch.evaluation_instance),
             )
             .where(EvaluationBranch.is_complete == False)
-            # .where(EvaluationInstance.is_complete == False)
+            .where(EvaluationInstance.is_complete == False)
             .where(
                 and_(
                     EvaluationStep.head == True,
@@ -581,94 +585,216 @@ class EvaluationService:
         return top_contributions
 
     # =========== A/B Testing ==========
-
-    async def init_ab_test(self, instance_id: uuid.UUID, contribution_type: str) -> ABTest:
+    async def init_ab_test(
+            self,
+            instance_id: uuid.UUID,
+            contribution_type: str,
+            winners: int = 1,
+            min_votes_threshold: int = 3,
+    ) -> ABTest:
         """
         Initialize A/B testing for an evaluation instance.
-        Creates pairwise comparisons of the top contributions.
+        Creates pairwise comparisons of the top contributions in a tournament structure.
+
+        Args:
+            instance_id: ID of the evaluation instance
+            contribution_type: Type of contribution (annotation, transcription, translation)
+            winners: Number of winners to select (default=1)
+            min_votes_threshold: Minimum votes needed for statistical significance
 
         Returns:
             The created ABTest instance
         """
-        instance = await self.get_evaluation_instance(instance_id)
 
-        if not instance.is_complete:
-            raise ValueError(f"Cannot initialize A/B test - instance {instance_id} is not complete")
+        # Check if an A/B test already exists
+        stmt = select(ABTest).where(ABTest.instance_id == instance_id)
+        existing_test: ABTest = (await self.db.execute(stmt)).scalars().first()
 
-        if not contribution_type:
-            raise ValueError(f"Could not determine contribution type for instance {instance_id}")
+        if existing_test:
+            return existing_test
 
-        if contribution_type not in self.task_type:
-            raise ValueError(f"Invalid contribution type: {contribution_type}")
-
-        # Get top contributions
+        # Get top contributions for this instance
         top_contributions = await self.select_top_contributions(
             instance_id=instance_id,
             contribution_type=contribution_type,
-            limit=6  # Get top 6 for A/B comparisons
+            limit=10  # Get more than we need to ensure enough for tournament
         )
 
         if len(top_contributions) < 2:
-            raise ValueError(f"Not enough contributions for A/B testing. Need at least 2, got {len(top_contributions)}")
+            raise ValueError("Need at least 2 contributions for A/B testing")
 
-        # Prepare initial A/B test stage using helper
-        stage = create_stage(
-            create_pairs([str(c.id) for c in top_contributions])
-        )
-
-        ab_test_data = {
-            "contribution_type": contribution_type,
-            "stages": [stage],
-            "final_winner": None,
-            "stage_winners": []
-        }
-
+        # Create the AB test with enhanced metadata
         ab_test = ABTest(
-            instance_id=instance.id,
-            is_complete=False,
-            ab_test=True,
-            ab_test_data=ab_test_data
+            instance_id=instance_id,
+            target_winner_count=winners,
+            stage_count=1,  # Start with stage 1
+            current_stage=1,
+            min_votes_threshold=min_votes_threshold,
+
         )
 
         self.db.add(ab_test)
         await self.db.commit()
         await self.db.refresh(ab_test)
 
+        # Create pairs for the first stage of the tournament
+        contribution_ids = [str(c.id) for c in top_contributions]
+
+        # Create pairs for the tournament
+        pairs = []
+        for i in range(0, len(contribution_ids) - 1, 2):
+            if i + 1 < len(contribution_ids):
+                # Create a pair with randomized order
+
+                if random.random() > 0.5:
+                    pairs.append((contribution_ids[i], contribution_ids[i + 1]))
+                else:
+                    pairs.append((contribution_ids[i + 1], contribution_ids[i]))
+
+        # Handle odd number of contributions
+        if len(contribution_ids) % 2 != 0 and len(contribution_ids) > 0:
+            # Last contribution gets bye to the next round
+            last_id = contribution_ids[-1]
+
+            # Choose a random index except the last one
+            random_index = random.randint(0, len(contribution_ids) - 2)
+            random_id = contribution_ids[random_index]
+
+            # Randomize the order of the pair for FE Orientation
+            if random.random() > 0.5:
+                pairs.append((last_id, random_id))
+            else:
+                pairs.append((random_id, last_id))
+
+        # Create ABTestPair records for each pair
+        for contribution_a_id, contribution_b_id in pairs:
+            pair = ABTestPair(
+                ab_test_id=ab_test.id,
+                stage_number=1,  # First stage
+                contribution_a_id=uuid.UUID(contribution_a_id),
+                contribution_b_id=uuid.UUID(contribution_b_id),
+                min_votes_required=min_votes_threshold,
+            )
+            self.db.add(pair)
+
+        await self.db.commit()
+        await self.db.refresh(ab_test)
+
         return ab_test
 
-    async def advance_ab_test(self, ab_test_id: uuid.UUID):
-
+    async def advance_ab_test(self, ab_test_id: uuid.UUID, contribution_type: str):
+        """
+        Advance an A/B test to the next stage.
+        """
         ab_test = await self.get_ab_test(ab_test_id)
         if not ab_test:
             raise ValueError(f"No ABTest found with ID {ab_test_id}")
 
-        last_stage = ab_test.ab_test_data["stages"][-1]
-        if not last_stage["complete"]:
-            raise ValueError("Last stage is not complete")
+        # Find the current stage number
+        current_stage = ab_test.current_stage
 
-        # Gather winners
-        winners = [result["winner"] for result in last_stage["results"].values()]
+        # Get all pairs for this stage
+        stmt = select(ABTestPair).where(
+            and_(
+                ABTestPair.ab_test_id == ab_test.id,
+                ABTestPair.stage_number == current_stage
+            )
 
-        if len(winners) == 1:
-            ab_test.ab_test_data["final_winner"] = winners[0]
+        )
+        pairs = (await self.db.execute(stmt)).scalars().all()
+
+        # Tally votes for each pair and determine winners
+        advancing_contributions = []
+        for pair in pairs:
+            # Get votes for this pair
+            vote_stmt = select(ABTestVote).where(ABTestVote.pair_id == pair.id)
+            votes = (await self.db.execute(vote_stmt)).scalars().all()
+            # Tally votes for each contribution
+            vote_counts = {}
+            for vote in votes:
+                cid = str(vote.selected_contribution_id)
+                vote_counts[cid] = vote_counts.get(cid, 0) + 1
+            # Determine winner (or tie)
+            if not vote_counts:
+                continue  # No votes, skip
+            max_votes = max(vote_counts.values())
+            winners = [cid for cid, count in vote_counts.items() if count == max_votes]
+            if len(winners) == 1:
+                advancing_contributions.append(winners[0])
+            else:
+                # Tie: advance both
+                advancing_contributions.extend(winners)
+
+        # Remove duplicates while preserving order
+        seen = set()
+        unique_advancing = []
+        for cid in advancing_contributions:
+            if cid not in seen:
+                unique_advancing.append(cid)
+                seen.add(cid)
+        advancing_contributions = unique_advancing
+
+        # If only one winner or target_winner_count reached, finalize
+        if (
+                len(advancing_contributions) <= ab_test.target_winner_count and
+                ab_test.current_stage >= ab_test.min_stage_depth
+        ):
             ab_test.is_complete = True
+            ab_test.completed_at = datetime.now(timezone.utc)
+            ab_test.final_winner_ids = [uuid.UUID(contribution_id) for contribution_id in advancing_contributions]
+            await self._mark_contribution_as_winner(uuid.UUID(advancing_contributions[0]), contribution_type)
             await self.db.commit()
-            return ab_test
-
-        next_stage = create_stage(create_pairs(winners))
-
-        ab_test.ab_test_data["stages"].append(next_stage)
-        ab_test.ab_test_data["stage_winners"] = winners
-
+            await self.db.refresh(ab_test)
+            return {
+                "ab_test_id": ab_test.id,
+                "is_complete": True,
+                "final_winners": advancing_contributions
+            }
+        # Otherwise, create next stage pairs
+        next_stage = current_stage + 1
+        random.shuffle(advancing_contributions)
+        new_pairs = []
+        num_adv = len(advancing_contributions)
+        i = 0
+        while i < num_adv - 1:
+            new_pairs.append((advancing_contributions[i], advancing_contributions[i + 1]))
+            i += 2
+        if num_adv % 2 != 0 and num_adv > 1:
+            last_idx = num_adv - 1
+            possible_indices = list(range(num_adv - 1))
+            random_idx = random.choice(possible_indices)
+            pair = (advancing_contributions[last_idx], advancing_contributions[random_idx])
+            # Optionally randomize order
+            if random.random() > 0.5:
+                pair = (pair[1], pair[0])
+            new_pairs.append(pair)
+        for contribution_a_id, contribution_b_id in new_pairs:
+            pair = ABTestPair(
+                ab_test_id=ab_test.id,
+                stage_number=next_stage,
+                contribution_a_id=uuid.UUID(contribution_a_id),
+                contribution_b_id=uuid.UUID(contribution_b_id),
+                min_votes_required=ab_test.min_votes_threshold,
+                metrics={}
+            )
+            self.db.add(pair)
+        ab_test.current_stage = next_stage
+        ab_test.stage_count = next_stage
         await self.db.commit()
         await self.db.refresh(ab_test)
-        return ab_test
+        return {
+            "ab_test_id": ab_test.id,
+            "is_complete": False,
+            "current_stage": next_stage,
+            "all_pairs_complete": True,
+            "advancing_contributions": len(advancing_contributions)
+        }
 
     async def get_ab_test(self, ab_test_id: uuid.UUID) -> ABTest:
         """Get an A/B test by ID"""
         stmt = select(ABTest).where(ABTest.id == ab_test_id)
         result = await self.db.execute(stmt)
-        ab_test = result.scalars().first()
+        ab_test: ABTest = result.scalars().first()
 
         if not ab_test:
             raise ValueError(f"A/B test with ID {ab_test_id} not found")
@@ -690,7 +816,7 @@ class EvaluationService:
             proficiency_level: int = 1
     ) -> Dict[str, Any]:
         """
-        Assign an A/B test comparison to a user
+        Assign an A/B test comparison to a user with randomization.
 
         Args:
             ab_test_id: ID of A/B test
@@ -698,172 +824,254 @@ class EvaluationService:
             proficiency_level: User's proficiency level (1-5)
 
         Returns:
-            Dict with the pair of contributions to compare
+            Dict with the pair of contributions to compare and evaluation criteria
         """
+        # Get the A/B test
         ab_test = await self.get_ab_test(ab_test_id)
 
         if ab_test.is_complete:
-            raise ValueError(f"A/B test {ab_test_id} is already complete")
+            return {
+                "error": "A/B test is already complete",
+                "final_winners": ab_test.final_winner_id
+            }
 
-        # Only assign to high proficiency users for A/B tests
-        if proficiency_level < 3:
-            raise ValueError(f"User proficiency level {proficiency_level} is too low for A/B testing (minimum 3)")
+        # Get pairs from the current stage that haven't been completed
+        current_stage = ab_test.current_stage
+        stmt = select(ABTestPair).where(
+            and_(
+                ABTestPair.ab_test_id == ab_test_id,
+                ABTestPair.stage_number == current_stage,
+                ABTestPair.is_complete == False
+            )
+        ).options(selectinload(ABTestPair.votes))
 
-        # Find current active stage
-        active_stage = get_active_stage(ab_test.ab_test_data)
+        pairs = (await self.db.execute(stmt)).scalars().all()
+        pairs = list(pairs)
 
-        if not active_stage:
-            raise ValueError(f"No active stages found in A/B test {ab_test_id}")
+        if not pairs:
+            return {
+                "error": "No active pairs found in the current stage",
+                "current_stage": current_stage
+            }
 
-        # Find a pair that hasn't been assigned to this user
-        user_id_str = str(user_id)
-        assigned_pair = None
+        # Find a pair that hasn't been voted on by this user
+        # Shuffle the pairs to randomize assignment
+        random.shuffle(pairs)
 
-        for pair in active_stage["pairs"]:
-            pair_id = f"{pair[0]}_{pair[1]}"
-            if pair_id not in active_stage["results"] or user_id_str not in active_stage["results"][pair_id]:
-                assigned_pair = pair
-                break
+        from datetime import datetime, timezone
 
-        if not assigned_pair:
-            raise ValueError(f"No available pairs to assign to user {user_id}")
+        TTE_SECONDS = getattr(settings, "TTE", 3600)  # Default to 1 hour if not set
+        for pair in pairs:
+            # Check if this user has already voted on this pair
+            user_voted = any(vote.user_id == user_id for vote in pair.votes)
+            if user_voted:
+                continue
 
-        # Get contribution details
-        contribution_type = ab_test.ab_test_data["contribution_type"]
-        contribution_model, _ = await self._get_models(contribution_type)
+            # Check if pair has reached the minimum votes threshold
+            if len(pair.votes) >= pair.min_votes_required:
+                continue
 
-        stmt = (
-            select(contribution_model)
-            .where(contribution_model.id.in_([uuid.UUID(assigned_pair[0]), uuid.UUID(assigned_pair[1])]))
-        )
+            # Check for stale votes (assigned but not completed, and TTE expired)
+            now = datetime.now(timezone.utc)
+            stale_vote = None
+            for vote in pair.votes:
+                if (
+                        vote.selected_contribution_id is None and
+                        (now - vote.vote_assigned_at).total_seconds() > TTE_SECONDS
+                ):
+                    stale_vote = vote
+                    break
 
-        result = await self.db.execute(stmt)
-        contributions = {str(c.id): c for c in result.scalars().all()}
+            from services.contribution_service import ContributionManagementService
+            contribution_management_service = ContributionManagementService(self.db)
 
-        # Return the pair information
+            # Get the contribution content
+            contribution_a = await contribution_management_service.get_contribution(
+                pair.contribution_a_id,
+                ab_test.contribution_type
+            )
+            contribution_b = await contribution_management_service.get_contribution(
+                pair.contribution_b_id,
+                ab_test.contribution_type
+            )
+            if not contribution_a or not contribution_b:
+                continue
+
+            def get_content(c):
+                if hasattr(c, "text"):
+                    return c.text
+                return str(c.id)
+
+            # If there is a stale vote, reassign it
+            if stale_vote:
+                stale_vote.user_id = user_id
+                stale_vote.vote_assigned_at = now
+                stale_vote.user_proficiency = proficiency_level
+                self.db.add(stale_vote)
+                await self.db.commit()
+                await self.db.refresh(stale_vote)
+                vote = stale_vote
+                a_shown_first = vote.a_shown_first
+            else:
+                # Randomize the presentation order (50% chance A shown first)
+                a_shown_first = random.random() > 0.5
+                vote = ABTestVote(
+                    pair_id=pair.id,
+                    user_id=user_id,
+                    selected_contribution_id=None,  # Will be set when submitted
+                    vote_assigned_at=now,
+                    user_proficiency=proficiency_level,
+                    a_shown_first=a_shown_first
+                )
+                self.db.add(vote)
+                await self.db.commit()
+                await self.db.refresh(vote)
+
+            first_contribution = {
+                "id": str(pair.contribution_a_id if a_shown_first else pair.contribution_b_id),
+                "content": get_content(contribution_a if a_shown_first else contribution_b)
+            }
+            second_contribution = {
+                "id": str(pair.contribution_b_id if a_shown_first else pair.contribution_a_id),
+                "content": get_content(contribution_b if a_shown_first else contribution_a)
+            }
+            return {
+                "ab_test_id": str(ab_test_id),
+                "pair_id": str(pair.id),
+                "vote_id": str(vote.id),
+                "stage_number": current_stage,
+                "option_a": first_contribution,
+                "option_b": second_contribution,
+                "a_shown_first": a_shown_first  # For tracking presentation bias
+            }
+
+        # If we get here, the user has voted on all available pairs
         return {
-            "ab_test_id": ab_test.id,
-            "stage_id": active_stage["stage_id"],
-            "pair": assigned_pair,
-            "contributions": [
-                {
-                    "id": assigned_pair[0],
-                    "content": contributions[assigned_pair[0]].target_text if hasattr(contributions[assigned_pair[0]],
-                                                                                      "target_text") else contributions[
-                        assigned_pair[0]].target_url,
-                    "upvotes": contributions[assigned_pair[0]].upvotes
-                },
-                {
-                    "id": assigned_pair[1],
-                    "content": contributions[assigned_pair[1]].target_text if hasattr(contributions[assigned_pair[1]],
-                                                                                      "target_text") else contributions[
-                        assigned_pair[1]].target_url,
-                    "upvotes": contributions[assigned_pair[1]].upvotes
-                }
-            ]
+            "error": "No available pairs for voting",
+            "suggestion": "Try advancing the test to the next stage if all votes are in"
         }
 
     async def submit_ab_test_result(
             self,
-            ab_test_id: uuid.UUID,
-            stage_id: str,
-            user_id: uuid.UUID,
-            selected_contribution_id: uuid.UUID
+            vote_id: uuid.UUID,
+            selected_contribution_id: uuid.UUID,
+            challenge_id: Optional[uuid.UUID] = None,
+            language_id: Optional[uuid.UUID] = None,
     ) -> Dict[str, Any]:
         """
-        Submit a user's selection for an A/B test comparison
+        Submit a user's selection for an A/B test comparison with multi-criteria evaluation.
 
         Args:
-            ab_test_id: ID of the A/B test
-            stage_id: ID of the stage
-            user_id: ID of the user submitting the result
+            vote_id: ID of the vote record
             selected_contribution_id: ID of the selected contribution
-
+            challenge_id: Optional ID of the challenge
+            language_id: Optional ID of the language
         Returns:
-            Dict with updated stage information
+            Dict with submission status
         """
-        ab_test = await self.get_ab_test(ab_test_id)
+        # Get the vote record
+        stmt = select(ABTestVote).where(ABTestVote.id == vote_id).options(
+            selectinload(ABTestVote.pair).joinedload(ABTestPair.ab_test)
+        )
+        vote_result = await self.db.execute(stmt)
+        vote = vote_result.scalars().first()
+
+        if not vote:
+            return {
+                "error": "Vote not found"
+            }
+
+        # Get the pair and test
+        pair = vote.pair
+        ab_test = pair.ab_test
 
         if ab_test.is_complete:
-            raise ValueError(f"A/B test {ab_test_id} is already complete")
+            return {
+                "error": "A/B test is already complete",
+                "final_winners": ab_test.final_winner_id
+            }
 
-        # Find the stage
-        stage = None
-        stage_index = -1
-        for i, s in enumerate(ab_test.ab_test_data["stages"]):
-            if s["stage_id"] == stage_id:
-                stage = s
-                stage_index = i
-                break
+        # Validate the selected contribution is part of this pair
+        if selected_contribution_id != pair.contribution_a_id and selected_contribution_id != pair.contribution_b_id:
+            return {
+                "error": "Selected contribution is not part of this pair"
+            }
 
-        if not stage:
-            raise ValueError(f"Stage {stage_id} not found in A/B test {ab_test_id}")
+        # Update the vote with the selection and ratings
+        vote.selected_contribution_id = selected_contribution_id
+        vote.vote_submitted_at = datetime.utcnow()
 
-        if stage["complete"]:
-            raise ValueError(f"Stage {stage_id} is already complete")
+        self.db.add(vote)
+        await self.db.commit()
 
-        # Find the pair that contains the selected contribution
-        selected_id_str = str(selected_contribution_id)
-        pair_id = None
+        eval_stats = ParticipationUpdate(
+            is_evaluation=True,
+            points=settings.POINTS_PER_AB_TEST_VOTE,
+        )
 
-        for pair in stage["pairs"]:
-            if selected_id_str in pair:
-                pair_id = f"{pair[0]}_{pair[1]}"
-                break
+        # Update challenge participation stats
+        if challenge_id:
+            from services.challenge_service import ChallengeService
+            challenge_service = ChallengeService(self.db)
+            await challenge_service.update_participation_stats(
+                event_id=challenge_id,
+                user_id=vote.user_id,
+                stats_data=eval_stats
+            )
 
-        if not pair_id:
-            raise ValueError(f"Selected contribution {selected_contribution_id} not found in any pair")
+        from services.language_service import LanguageService
+        language_service = LanguageService(self.db)
+        await language_service.user_language_repository.update_language_stats(
+            user_id=vote.user_id,
+            language_id=language_id,
+            stats_data=eval_stats
+        )
 
-        # Initialize results for this pair if needed
-        if pair_id not in stage["results"]:
-            stage["results"][pair_id] = {}
+        # Check if this pair has enough votes to be considered complete
+        stmt = select(ABTestVote).where(ABTestVote.pair_id == pair.id)
+        votes_result = await self.db.execute(stmt)
+        votes = votes_result.scalars().all()
 
-        # Record the user's selection
-        stage["results"][pair_id][str(user_id)] = selected_id_str
+        # Count votes with selections
+        valid_votes = [v for v in votes if v.selected_contribution_id is not None]
 
-        # Get total number of votes for this stage
-        total_votes = sum(len(results) for results in stage["results"].values())
-        required_votes = len(stage["pairs"]) * 3  # Example: 3 votes per pair
+        # Check if we've reached the minimum votes threshold
+        can_advance = len(valid_votes) >= pair.min_votes_required
 
-        # Check if stage is complete
-        if total_votes >= required_votes:
-            stage["complete"] = True
+        if can_advance:
+            pair.is_complete = True
 
-            # Calculate stage winner(s)
-            winners = [
-                tally_pair_votes(pair_results)
-                for pair_results in stage["results"].values()
-                if tally_pair_votes(pair_results)
-            ]
-
-            # Store stage winners
-            ab_test.ab_test_data["stage_winners"].append(winners)
-
-            # Create next stage if needed
-            if len(winners) > 1:
-                next_stage = create_stage(create_pairs(winners))
-                ab_test.ab_test_data["stages"].append(next_stage)
-            else:
-                # Final winner
-                ab_test.ab_test_data["final_winner"] = winners[0]
-                ab_test.is_complete = True
-
-                # Mark the winning contribution as passed/accepted
-                await self._mark_contribution_as_winner(
-                    uuid.UUID(winners[0]),
-                    ab_test.ab_test_data["contribution_type"]
+        # Check if all pairs in this stage have enough votes
+        all_pairs_complete = False
+        if can_advance:
+            # Get all pairs for this stage
+            stmt = select(ABTestPair).where(
+                and_(
+                    ABTestPair.ab_test_id == ab_test.id,
+                    ABTestPair.stage_number == pair.stage_number
                 )
+            ).options(selectinload(ABTestPair.votes))
+
+            pairs_result = await self.db.execute(stmt)
+            all_pairs = pairs_result.scalars().all()
+
+            # Check if all pairs have enough votes
+            all_pairs_complete = all(
+                len([v for v in p.votes if v.selected_contribution_id is not None]) >= p.min_votes_required for p in
+                all_pairs)
 
         # Save changes
         await self.db.commit()
 
         return {
-            "stage_complete": stage["complete"],
-            "ab_test_complete": ab_test.is_complete,
-            "final_winner": ab_test.ab_test_data.get("final_winner"),
-            "next_stage_id":
-                ab_test.ab_test_data["stages"][stage_index + 1]["stage_id"] if stage[
-                                                                                   "complete"] and not ab_test.is_complete else None
+            "success": True,
+            "vote_id": str(vote.id),
+            "pair_id": str(pair.id),
+            "ab_test_id": str(ab_test.id),
+            "can_advance": can_advance,
+            "all_pairs_complete": all_pairs_complete,
+            "votes_received": len(valid_votes),
+            "votes_required": pair.min_votes_required
         }
 
     async def _mark_contribution_as_winner(self, contribution_id: uuid.UUID, contribution_type: str) -> None:
@@ -964,4 +1172,3 @@ class EvaluationService:
             "final_winner": ab_test.ab_test_data.get("final_winner")
         }
 
-    # =========== User Assignment ==========

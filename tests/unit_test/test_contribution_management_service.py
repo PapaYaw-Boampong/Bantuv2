@@ -5,6 +5,7 @@ from unittest.mock import AsyncMock, MagicMock
 from sqlalchemy.ext.asyncio import AsyncSession
 # Suppress Pydantic deprecation warnings
 import warnings
+
 warnings.filterwarnings("ignore", category=DeprecationWarning, module="pydantic")
 
 from models import (

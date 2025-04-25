@@ -57,6 +57,7 @@ class ChallengeReward(SQLModel, table=True):
     id: uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True, index=True)
 
     reward_type: RewardType  # Cash, badge, leaderboard rank
+    reward_distribution_type: RewardDistributionType  # Fixed, percentage, tiered
     reward_value: dict = Field(sa_column=Column(JSON))
     created_at: datetime = Field(default_factory=datetime.utcnow)
 

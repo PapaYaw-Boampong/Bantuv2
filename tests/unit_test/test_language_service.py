@@ -577,38 +577,3 @@ async def test_remove_user_language_not_found(language_service):
     assert excinfo.value.status_code == 404
     assert "not found" in excinfo.value.detail
 
-
-@pytest.mark.asyncio
-async def test_update_speech_hours(language_service, mock_user_language):
-    """Test updating speech hours"""
-    # Setup
-    user_id = str(uuid.uuid4())
-    language_id = str(uuid.uuid4())
-    hours = 10
-    language_service.user_language_repository.update_lang_speech_hours.return_value = mock_user_language
-
-    # Execute
-    result = await language_service.update_lang_speech_hours(user_id, language_id, hours)
-
-    # Assert
-    assert result == mock_user_language
-    language_service.user_language_repository.update_lang_speech_hours.assert_called_once_with(user_id, language_id, hours)
-
-
-@pytest.mark.asyncio
-async def test_update_sentences_translated(language_service, mock_user_language):
-    """Test updating sentences translated"""
-    # Setup
-    user_id = str(uuid.uuid4())
-    language_id = str(uuid.uuid4())
-    sentences = 100
-    language_service.user_language_repository.update_lang_sentences_translated.return_value = mock_user_language
-
-    # Execute
-    result = await language_service.update_lang_sentences_translated(user_id, language_id, sentences)
-
-    # Assert
-    assert result == mock_user_language
-    language_service.user_language_repository.update_lang_sentences_translated.assert_called_once_with(
-        user_id, language_id, sentences
-    )

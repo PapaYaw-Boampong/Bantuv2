@@ -24,7 +24,7 @@ async def get_user(
     Get current user profile
     """
     user_service = UserService(db)
-    profile = await get_user_profile(str(current_user.id))
+    profile = await user_service.get_detailed_user_by_id(str(current_user.id))
     return profile
 
 

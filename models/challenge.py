@@ -41,6 +41,8 @@ class Challenge(SQLModel, table=True):
     )
     language_id: uuid.UUID = Field(foreign_key="language.id")
 
+    creator: uuid.UUID = Field(foreign_key="user.id")
+
     challenge_reward_id: uuid.UUID = Field(foreign_key="challenge_reward.id")
 
     challenge_name: str
@@ -56,13 +58,20 @@ class Challenge(SQLModel, table=True):
     is_published: bool = Field(default=False)
 
     # Add progress tracking
-    completion_percent: int = Field(default=0)
+    completion_percent: float = Field(default=0.0)
 
     # Statistics
     participant_count: int = Field(default=0)
     contribution_count: int = Field(default=0)
 
-    # Relationship
+    # Relationships
+
+    # Relationships
+    user: Optional["User"]= Relationship(
+        back_populates="challenges",
+        sa_relationship_kwargs={"lazy": "selectin"}
+    )
+
     participants: List["ChallengeParticipation"] = Relationship(
         back_populates="challenge",
         sa_relationship_kwargs={"cascade": "all, delete", "lazy": "selectin"}
@@ -76,7 +85,7 @@ class Challenge(SQLModel, table=True):
     )
 
     language: "Language" = Relationship(
-        back_populates="challenges", sa_relationship_kwargs={ "lazy": "selectin"}
+        back_populates="challenges", sa_relationship_kwargs={"lazy": "selectin"}
     )
 
     rules: List["ChallengeRule"] = Relationship(
@@ -87,7 +96,7 @@ class Challenge(SQLModel, table=True):
         }
     )
 
-    evaluation_instance: List["EvaluationInstance"] = Relationship(
+    evaluation_instances: List["EvaluationInstance"] = Relationship(
         back_populates="challenge",
         sa_relationship_kwargs={
             "cascade": "all, delete-orphan",
@@ -113,8 +122,6 @@ class ChallengeParticipation(SQLModel, table=True):
     total_sentences_translated: int = Field(default=0)
     total_tokens_produced: int = Field(default=0)
     total_points: int = Field(default=0)
-
-    acceptance_rate: float = Field(default=0.0)
 
     # Reputation Metrics
     contribution_count: int = Field(default=0)
@@ -166,5 +173,3 @@ class ChallengeRule(SQLModel, table=True):
             "passive_deletes": True
         }
     )
-
-

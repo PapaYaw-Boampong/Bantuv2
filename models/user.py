@@ -8,9 +8,8 @@ from enum import Enum as PyEnum
 if TYPE_CHECKING:
     from models import (
         TranscriptionContribution, TranslationContribution, AnnotationContribution,
-        # TranscriptionEvaluationRecord, TranslationEvaluationRecord, AnnotationEvaluationRecord,
-        # EvaluationStep, ChallengeParticipation, RefreshToken, Language,
-        UserMilestone, UserChallengeReward,
+        EvaluationStep, ChallengeParticipation, RefreshToken, Language,
+        UserMilestone, UserChallengeReward, Challenge
     )
 
 
@@ -62,29 +61,21 @@ class User(SQLModel, table=True):
     )
 
     evaluation_steps: List["EvaluationStep"] = Relationship(
-        back_populates="evaluation_branch",
+        back_populates="user",
         sa_relationship_kwargs={
             "cascade": "all, delete-orphan",
             "lazy": "selectin"
         }
     )
 
-    # transcription_evaluation_records: List["TranscriptionEvaluationRecord"] = Relationship(
-    #     back_populates="user",
-    #     sa_relationship_kwargs={"cascade": "all, delete-orphan", "lazy": "selectin"}
-    # )
-    #
-    # translation_evaluation_records: List["TranslationEvaluationRecord"] = Relationship(
-    #     back_populates="user",
-    #     sa_relationship_kwargs={"cascade": "all, delete-orphan", "lazy": "selectin"}
-    # )
-    # annotation_evaluation_records: List["AnnotationEvaluationRecord"] = Relationship(
-    #     back_populates="user",
-    #     sa_relationship_kwargs={"cascade": "all, delete-orphan", "lazy": "selectin"}
-    # )
-
     events: List["ChallengeParticipation"] = Relationship(
         back_populates="user", sa_relationship_kwargs={"cascade": "all, delete-orphan", "lazy": "selectin"}
+    )
+
+    # Relationships
+    challenges: List["Challenge"] = Relationship(
+        back_populates="user",
+        sa_relationship_kwargs={"lazy": "selectin"}
     )
 
     user_languages: List["UserLanguage"] = Relationship(
@@ -93,7 +84,7 @@ class User(SQLModel, table=True):
 
     refresh_tokens: List["RefreshToken"] = Relationship(
         back_populates="user",
-        sa_relationship_kwargs={"lazy": "selectin", "cascade": "all, delete-orphan"}
+        sa_relationship_kwargs={"lazy": "selectin", "cascade": "all, delete"}
     )
 
     challenge_reward: List["UserChallengeReward"] = Relationship(
@@ -117,15 +108,42 @@ class UserLanguage(SQLModel, table=True):
     user_id: uuid.UUID = Field(foreign_key="user.id")
     language_id: uuid.UUID = Field(foreign_key="language.id")
 
-    task_type: TaskType
-
     proficiency: str = Field(default="beginner")
 
-    ranking: int = Field(default=0) # Ranking in the leaderboard for this language
+    ranking: int = Field(default=0)  # Ranking in the leaderboard for this language
 
     total_hours_speech: int = Field(default=0)
     total_sentences_translated: int = Field(default=0)
     total_annotation_tokens: int = Field(default=0)
+
+    # Relationships
+    user: "User" = Relationship(
+        back_populates="user_languages", sa_relationship_kwargs={"lazy": "selectin"}
+    )
+    language: "Language" = Relationship(
+        back_populates="user_languages", sa_relationship_kwargs={"lazy": "selectin"}
+    )
+
+    task_stats: List["UserLanguageStats"] = Relationship(
+        back_populates="user_language",
+        sa_relationship_kwargs={"lazy": "selectin", "cascade": "all, delete-orphan"}
+    )
+
+
+class UserLanguageStats(SQLModel, table=True):
+    __tablename__ = "user_language_stats"
+
+    id: uuid.UUID = Field(
+        default_factory=uuid.uuid4,
+        primary_key=True,
+        index=True
+    )
+
+    user_language_id: uuid.UUID = Field(foreign_key="user_language.id")
+
+    task_type: TaskType = Field(default=None)
+
+    proficiency: float = Field(default=3.0)
 
     # Reputation Metrics
     contribution_count: int = Field(default=0)
@@ -140,10 +158,7 @@ class UserLanguage(SQLModel, table=True):
     created_at: datetime = Field(default_factory=datetime.utcnow)
     updated_at: datetime = Field(default_factory=datetime.utcnow)
 
-    # Relationships
-    user: "User" = Relationship(
-        back_populates="user_languages", sa_relationship_kwargs={"lazy": "selectin"}
-    )
-    language: "Language" = Relationship(
-        back_populates="user_languages", sa_relationship_kwargs={"lazy": "selectin"}
+    user_language: "UserLanguage" = Relationship(
+        back_populates="task_stats",
+        sa_relationship_kwargs={"lazy": "selectin"}
     )

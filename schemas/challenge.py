@@ -7,11 +7,13 @@ from models.challenge import EventType, TaskType, EventCategory, ChallengeStatus
 # Pydantic models for request/response
 class ChallengeCreate(BaseModel):
     challenge_name: str
+    language_id: UUID4
     description: Optional[str] = None
 
 
 class Challenge(ChallengeCreate):
     id: UUID4
+    creator: UUID4
     event_type: EventType
     task_type: TaskType
     event_category: EventCategory
@@ -20,14 +22,15 @@ class Challenge(ChallengeCreate):
     status: ChallengeStatus
     is_public: bool = True
     is_published: bool = False
-    reward: UUID4  # Reference to the reward ID
-    target_contribution_count: Optional[int] = None
-
+    challenge_reward: Optional[UUID4] = None  # Reference to the reward ID
+    participation_count: Optional[int] = None
+    completion_percent: Optional[float] = None
     model_config = ConfigDict(from_attributes=True)
 
 
 class ChallengeUpdate(BaseModel):
     challenge_name: Optional[str] = None
+    language_id: Optional[UUID4] = None
     description: Optional[str] = None
     event_type: Optional[EventType] = None
     task_type: Optional[TaskType] = None
@@ -37,9 +40,6 @@ class ChallengeUpdate(BaseModel):
     status: Optional[ChallengeStatus] = None
     is_public: Optional[bool] = None
     is_published: Optional[bool] = None
-    reward: Optional[UUID4] = None
-    target_contribution_count: Optional[int] = None
-    rules: Optional[List[dict]] = None  # Assuming rules are a list of dictionaries
 
 
 class ChallengeParticipationCreate(BaseModel):
@@ -47,20 +47,24 @@ class ChallengeParticipationCreate(BaseModel):
     user_id: UUID4
 
 
-class ChallengeParticipationUpdate(BaseModel):
-    total_hours_speech: Optional[int] = None
-    total_sentences_translated: Optional[int] = None
-    total_tokens_produced: Optional[int] = None
-    total_points: Optional[int] = None
-    acceptance_rate: Optional[float] = None
+class ParticipationUpdate(BaseModel):
+    total_hours_speech: Optional[int] = 0
+    total_sentences_translated: Optional[int] = 0
+    total_tokens_produced: Optional[int] = 0
+    total_points: Optional[int] = 0
+
+    is_evaluation: Optional[bool] = False
+    is_contribution: Optional[bool] = False
+
+    accepted: Optional[bool] = False
 
 
-class UserStatsUpdate(BaseModel):
-    total_hours_speech: Optional[int] = None
-    total_sentences_translated: Optional[int] = None
-    total_tokens_produced: Optional[int] = None
-    total_points: Optional[int] = None
-    acceptance_rate: Optional[float] = None
+# class UserStatsUpdate(BaseModel):
+#     total_hours_speech: Optional[int] = None
+#     total_sentences_translated: Optional[int] = None
+#     total_tokens_produced: Optional[int] = None
+#     total_points: Optional[int] = None
+#     acceptance_rate: Optional[float] = None
 
 
 class ChallengeParticipantResponse(BaseModel):
@@ -76,6 +80,7 @@ class ChallengeParticipantResponse(BaseModel):
 
 class ChallengeSummary(BaseModel):
     id: str
+    creator: str
     challenge_name: str
     description: Optional[str] = None
     event_type: EventType
@@ -87,9 +92,16 @@ class ChallengeSummary(BaseModel):
     is_public: bool
     is_published: bool
     participant_count: int
-    contribution_count: int
+    created_at: datetime
 
     model_config = ConfigDict(from_attributes=True)
+
+
+class UserChallengeFilter(BaseModel):
+    skip: int = 0
+    limit: int = 100
+    status: Optional[ChallengeStatus] = None
+    include_challenge_details: bool = True
 
 
 class ChallengeDetailResponse(ChallengeSummary):
@@ -100,6 +112,8 @@ class ChallengeDetailResponse(ChallengeSummary):
 
 
 class GetChallenges(BaseModel):
+    creator: Optional[UUID4] = None
+    language_id: Optional[UUID4] = None
     status: Optional[ChallengeStatus] = None
     event_type: Optional[EventType] = None
     task_type: Optional[TaskType] = None
@@ -108,3 +122,21 @@ class GetChallenges(BaseModel):
     is_published: Optional[bool] = None
     skip: int = 0
     limit: int = 100
+
+
+class AddChallengeReward(BaseModel):
+    challenge_id: UUID4
+    reward_id: UUID4
+
+
+class ChallengeRule(BaseModel):
+    rule_title: str
+    rule_description: str
+    is_required: bool
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class ChallengeRulesAdd(BaseModel):
+    challenge_id: UUID4
+    rules: List[ChallengeRule]

@@ -33,15 +33,22 @@ class Settings(BaseModel):
 
     POINTS_PER_CONTRIBUTION: int = 10
     POINTS_PER_EVALUATION: int = 10
+    POINTS_PER_AB_TEST: int = 5
+
+    AB_TEST_WINNER_BONUS: int = 5
+
     POINTS_PER_CONTRIBUTION_ACCEPTANCE: int = 8
-    POINTS_FOR_ACCURATE_EVALUATION: int = 5
+    POINTS_FOR_ACCURATE_EVALUATION: int = 8
+
+    AB_TEST_PROFICIENCY_QUALIFICATION: int = 6
+    EVALUATOR_PROFICIENCY_THRESHOLD: int = 7
 
     # Security settings
     JWT_ALGORITHM: str = os.getenv("JWT_ALGORITHM", "HS256")
     ACCESS_TOKEN_EXPIRE_MINUTES: int = int(os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES", "15"))
     REFRESH_TOKEN_EXPIRE_DAYS: int = int(os.getenv("REFRESH_TOKEN_EXPIRE_DAYS", "5"))
     ACCESS_SECRET_KEY: str = os.getenv("ACCESS_SECRET_KEY", "your_default_secret_key")
-    REFRESH_SECRET_KEY : str = os.getenv("REFRESH_SECRET_KEY", "your_other_default_refresh_secret_key")
+    REFRESH_SECRET_KEY: str = os.getenv("REFRESH_SECRET_KEY", "your_other_default_refresh_secret_key")
 
     # Admin user
     FIRST_SUPERUSER: Optional[str] = os.getenv("FIRST_SUPERUSER", "admin@bantu.com")

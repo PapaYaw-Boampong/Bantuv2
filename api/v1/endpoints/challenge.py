@@ -1,3 +1,5 @@
+import uuid
+
 from fastapi import APIRouter, Depends, HTTPException, Query, Path
 from sqlalchemy.ext.asyncio import AsyncSession
 from typing import List, Dict, Any
@@ -8,8 +10,9 @@ from schemas.challenge import (
     ChallengeCreate,
     ChallengeUpdate,
     ChallengeParticipationCreate,
-    ChallengeParticipationUpdate,
+    ParticipationUpdate,
     GetChallenges,
+    UserChallengeFilter
 )
 from services.challenge_service import ChallengeService
 from api.v1.deps import get_current_active_user, get_current_superuser
@@ -29,7 +32,7 @@ async def create_challenge(
         current_user: User = Depends(get_current_superuser)
 ):
     """Create a new challenge."""
-    return await challenge_service.create_challenge(challenge_data)
+    return await challenge_service.create_challenge(challenge_data, current_user.id)
 
 
 @router.get("/{challenge_id}", response_model=Challenge)
@@ -38,7 +41,11 @@ async def get_challenge(
         challenge_service: ChallengeService = Depends(get_challenge_service)
 ):
     """Get a specific challenge by ID."""
-    challenge = await challenge_service.get_challenge(challenge_id)
+    try:
+        challenge_uuid = uuid.UUID(challenge_id)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid challenge ID format")
+    challenge = await challenge_service.get_challenge(challenge_uuid)
     if not challenge:
         raise HTTPException(status_code=404, detail=f"Challenge with ID {challenge_id} not found")
     return challenge
@@ -47,9 +54,31 @@ async def get_challenge(
 @router.get("/", response_model=List[Challenge])
 async def get_challenges(
         query_params: GetChallenges = Depends(),
-        challenge_service: ChallengeService = Depends(get_challenge_service)
+        challenge_service: ChallengeService = Depends(get_challenge_service),
+        current_user: User = Depends(get_current_superuser)
 ):
     """Get all challenges with filters and pagination."""
+    return await challenge_service.list_challenges(query_params)
+
+
+@router.get("/participating", response_model=List[Challenge])
+async def get_challenges(
+        query_params: UserChallengeFilter = Depends(),
+        challenge_service: ChallengeService = Depends(get_challenge_service),
+        current_user: User = Depends(get_current_superuser)
+):
+    """Get all challenges with filters and pagination."""
+    return await challenge_service.get_user_challenges(user_id=current_user.id, filters=query_params)
+
+
+@router.get("/myChallenges", response_model=List[Challenge])
+async def get_challenges(
+        query_params: GetChallenges = Depends(),
+        challenge_service: ChallengeService = Depends(get_challenge_service),
+        current_user: User = Depends(get_current_superuser)
+):
+    """Get all challenges with filters and pagination."""
+    query_params.creator = current_user.id
     return await challenge_service.list_challenges(query_params)
 
 
@@ -61,7 +90,13 @@ async def update_challenge(
         current_user: User = Depends(get_current_superuser)
 ):
     """Update a challenge's information."""
-    challenge = await challenge_service.update_challenge(challenge_id, challenge_data)
+
+    try:
+        challenge_uuid = uuid.UUID(challenge_id)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid challenge ID format")
+
+    challenge = await challenge_service.update_challenge(challenge_uuid, challenge_data)
     if not challenge:
         raise HTTPException(status_code=404, detail=f"Challenge with ID {challenge_id} not found")
     return challenge
@@ -74,8 +109,14 @@ async def delete_challenge(
         current_user: User = Depends(get_current_superuser)
 ):
     """Delete a challenge if it is not active."""
+
     try:
-        success = await challenge_service.delete_challenge(challenge_id)
+        challenge_uuid = uuid.UUID(challenge_id)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid challenge ID format")
+
+    try:
+        success = await challenge_service.delete_challenge(challenge_uuid)
         if success:
             return {"message": "Challenge deleted successfully"}
         raise HTTPException(status_code=400, detail="Challenge cannot be deleted")
@@ -105,7 +146,12 @@ async def leave_challenge(
 ):
     """Leave a challenge."""
     try:
-        result = await challenge_service.leave_challenge(challenge_id, str(current_user.id))
+        challenge_uuid = uuid.UUID(challenge_id)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid challenge ID format")
+
+    try:
+        result = await challenge_service.leave_challenge(challenge_uuid, current_user.id)
         if result:
             return {"message": "User left challenge successfully", "result": result}
         else:
@@ -121,7 +167,12 @@ async def get_challenge_leaderboard(
         challenge_service: ChallengeService = Depends(get_challenge_service)
 ):
     """Get the leaderboard for a challenge."""
-    return await challenge_service.get_challenge_leaderboard(challenge_id, limit=limit)
+    try:
+        challenge_uuid = uuid.UUID(challenge_id)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid challenge ID format")
+
+    return await challenge_service.get_challenge_leaderboard(challenge_uuid, limit=limit)
 
 
 @router.put("/{challenge_id}/status", response_model=Challenge)
@@ -132,7 +183,11 @@ async def update_challenge_status(
         current_user: User = Depends(get_current_superuser)
 ):
     """Manually update a challenge's status."""
-    challenge = await challenge_service.update_challenge_status(challenge_id, status)
+    try:
+        challenge_uuid = uuid.UUID(challenge_id)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid challenge ID format")
+    challenge = await challenge_service.update_challenge_status(challenge_uuid, status)
     if not challenge:
         raise HTTPException(status_code=404, detail=f"Challenge with ID {challenge_id} not found")
     return challenge
@@ -147,19 +202,31 @@ async def get_challenge_participants(
         current_user: User = Depends(get_current_active_user)
 ):
     """Get participants in a challenge."""
-    return await challenge_service.get_challenge_participants(challenge_id, skip, limit)
+    try:
+        challenge_uuid = uuid.UUID(challenge_id)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid challenge ID format")
+    return await challenge_service.get_challenge_participants(challenge_uuid, skip, limit)
 
 
 @router.patch("/{challenge_id}/participants/{user_id}", response_model=Dict[str, Any])
 async def update_participant_stats(
         challenge_id: str,
         user_id: str,
-        update_data: ChallengeParticipationUpdate,
+        update_data: ParticipationUpdate,
         challenge_service: ChallengeService = Depends(get_challenge_service),
         current_user: User = Depends(get_current_superuser)
 ):
+    try:
+        challenge_uuid = uuid.UUID(challenge_id)
+        user_uuid = uuid.UUID(user_id)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid challenge ID format")
     """Update stats or role of a participant."""
-    updated = await challenge_service.update_participant_stats(challenge_id, user_id, update_data)
+    updated = await challenge_service.update_participation_stats(
+        challenge_uuid,
+        user_uuid,
+        update_data)
     return {"message": "Participant updated successfully", "participant": updated}
 
 
@@ -170,7 +237,11 @@ async def publish_challenge(
         current_user: User = Depends(get_current_superuser)
 ):
     """Publish a challenge."""
-    challenge = await challenge_service.publish_challenge(challenge_id)
+    try:
+        challenge_uuid = uuid.UUID(challenge_id)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid challenge ID format")
+    challenge = await challenge_service.publish_challenge(challenge_uuid)
     return challenge
 
 
@@ -181,5 +252,10 @@ async def unpublish_challenge(
         current_user: User = Depends(get_current_superuser)
 ):
     """Unpublish a challenge."""
-    challenge = await challenge_service.unpublish_challenge(challenge_id)
+    try:
+        challenge_uuid = uuid.UUID(challenge_id)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid challenge ID format")
+
+    challenge = await challenge_service.unpublish_challenge(challenge_uuid)
     return challenge

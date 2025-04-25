@@ -10,4 +10,5 @@ from models.challenge import ChallengeParticipation, Challenge, TaskType, Challe
 from models.model_meta import ModelMetadata
 from models.tokens import RefreshToken
 from models.rewards import UserMilestone, Milestone, ChallengeReward, UserChallengeReward
-from models.eval import EvaluationBranch, EvaluationInstance, EvaluationStep, ABTest
+from models.eval import EvaluationBranch, EvaluationInstance, EvaluationStep, ABTest, ABTestPair, \
+    ABTestVote

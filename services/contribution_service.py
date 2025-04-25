@@ -34,6 +34,9 @@ from schemas.sample_data import (
 )
 
 
+from schemas.challenge import ParticipationUpdate
+
+
 class ContributionManagementService:
     """
     Service responsible for overseeing, distributing, and validating user contributions
@@ -86,7 +89,7 @@ class ContributionManagementService:
             "active": True,
             "flagged": False,
             "passed": False,
-            "upvotes": 0
+            "upvotes": 1
         }
 
         language_service = LanguageService(self.db)
@@ -94,10 +97,9 @@ class ContributionManagementService:
         challenge_service = ChallengeService(self.db)
 
         word_dict = {}
-        stats_data = {
-            "is_contribution": True,
-            "accepted": False,  # Will be updated later by review/evaluation
-        }
+        stats_data = ParticipationUpdate(
+            is_contribution=True,
+        )
 
         if data.target_text == "" and data.target_url == "":
             raise ValueError("Contribution cannot be empty")
@@ -111,14 +113,14 @@ class ContributionManagementService:
 
             if contribution_type == "annotation":
                 token_count = len(word_list)
-                stats_data["tokens"] = token_count
+                stats_data.total_tokens_produced = token_count
 
             elif contribution_type == "translation":
-                stats_data["sentences"] = 1
+                stats_data.total_sentences_translated = 1
 
         elif contribution_type == "transcription":
             contribution_data["target_url"] = data.target_url
-            stats_data["hours"] = data.speech_length
+            stats_data.total_hours_speech = data.speech_length
 
         # Save Contribution
         contribution = model_class(**contribution_data)
@@ -128,7 +130,7 @@ class ContributionManagementService:
 
         # Record contribution stats for challenge or globally
         if challenge_id:
-            stats_data['points'] = settings.POINTS_PER_CONTRIBUTION
+            stats_data.total_points = settings.POINTS_PER_CONTRIBUTION
             await challenge_service.update_participation_stats(
                 event_id=challenge_id,
                 user_id=user_id,
@@ -165,7 +167,7 @@ class ContributionManagementService:
 
         stmt = select(model_class).where(model_class.id == contribution_id)
         result = await self.db.execute(stmt)
-        contribution = result.scalars().first()
+        contribution: Union[AnnotationContribution, TranscriptionContribution, TranslationContribution] = result.scalars().first()
 
         if not contribution:
             raise ValueError(f"{contribution_type.capitalize()} contribution with ID {contribution_id} not found")

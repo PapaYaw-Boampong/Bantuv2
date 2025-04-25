@@ -36,3 +36,5 @@ class LogoutRequest(BaseModel):
     Schema for logout request
     """
     refresh_token: str
+
+

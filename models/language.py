@@ -23,7 +23,7 @@ class Language(SQLModel, table=True):
 
     is_active: bool = Field(default=True)
 
-    deactivated_at: Optional[datetime] = Field(default=None, nullable=True)
+    updated_at: Optional[datetime] = Field(default=None, nullable=True)
 
     code: str = Field(
         index=True, unique=True

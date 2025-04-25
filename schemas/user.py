@@ -1,6 +1,7 @@
 from typing import Optional, List
 from pydantic import BaseModel, EmailStr, Field, field_validator, UUID4, ConfigDict
 from datetime import datetime
+from schemas.token import Token
 
 
 # Base User schema with common attributes
@@ -92,7 +93,7 @@ class ChangePasswordResponse(BaseModel):
 
 # Base response schema for User
 class UserResponse(BaseModel):
-    id: str
+    id: UUID4
     username: str
     fullname: str
     email: str
@@ -105,15 +106,17 @@ class UserResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
 
+class RegisterResponse(BaseModel):
+    user: UserResponse
+    access_tokens: Token
+
+
 # Extended response schema for User profile
 class UserProfileResponse(UserResponse):
-    contribution_count: int
-    accepted_contributions: int
-    reputation_score: float
     total_hours_speech: int
     total_sentences_translated: int
     total_tokens_produced: int
-    total_points: int
+
     acceptance_rate: Optional[float] = None
     country: str = None
     milestones: List[str] = []  # List of milestone IDs

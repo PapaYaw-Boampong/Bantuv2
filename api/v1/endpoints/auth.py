@@ -8,9 +8,11 @@ from services.user_service import UserService
 from services.token_service import TokenService
 from schemas.user import (
     UserCreate,
+    UserResponse,
     UserProfileResponse,
     ChangePasswordRequest,
     ChangePasswordResponse,
+    RegisterResponse
 )
 
 from schemas.token import (
@@ -29,17 +31,21 @@ router = APIRouter()
 
 @router.post(
     "/register",
-    response_model=UserProfileResponse,
+
+    response_model=RegisterResponse,
+
     status_code=status.HTTP_201_CREATED)
 async def register_user(
         *,
         db: AsyncSession = Depends(get_session),
         user_in: UserCreate
-) -> Any:
+) -> RegisterResponse:
     """
     Register a new user
     """
     user_service = UserService(db)
+    token_service = TokenService(db)
+
     user = await user_service.register_user(
         username=user_in.username,
         email=user_in.email,
@@ -48,7 +54,12 @@ async def register_user(
         country=user_in.country
     )
     user.id = str(user.id)  # Convert UUID to string for response
-    return user
+    access_tokens = await token_service.create_tokens(str(user.id))
+
+    return {
+        "user": user,
+        "access_tokens": access_tokens
+    }
 
 
 @router.post("/refresh", response_model=RefreshTokenResponse)
@@ -104,7 +115,7 @@ async def change_password(
     """
     user_service = UserService(db)
     result = await user_service.change_password(
-        user_id=str(current_user.id),
+        user=current_user,
         current_password=password_in.current_password,
         new_password=password_in.new_password
     )

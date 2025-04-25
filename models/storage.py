@@ -1,7 +1,7 @@
 from sqlmodel import SQLModel, Field
 import uuid
 from typing import Optional
-import datetime
+from datetime import datetime
 
 
 class MediaFile(SQLModel, table=True):
