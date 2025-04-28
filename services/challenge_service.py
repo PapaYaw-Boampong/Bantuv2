@@ -12,7 +12,7 @@ from models.challenge import (
 from models.user import User
 from crud.challenge import ChallengeRuleRepository
 from schemas.challenge import (
-    ChallengeCreate, ChallengeUpdate, ChallengeParticipationCreate,
+    ChallengeUpdate, ChallengeParticipationCreate,
     ParticipationUpdate, GetChallenges, ChallengeRulesAdd, UserChallengeFilter
 )
 
@@ -62,17 +62,23 @@ class ChallengeService:
 
     # Challenge methods
     async def create_challenge(
-            self, challenge_data: ChallengeCreate,
+            self,
+            challenge_data: ChallengeUpdate,
             creator: UUID
     ) -> Challenge:
         challenge = Challenge(
             challenge_name=challenge_data.challenge_name,
             description=challenge_data.description,
             language_id=challenge_data.language_id,
-            status=ChallengeStatus.UPCOMING,
+            status=challenge_data.challenge_status,
             is_public=True,
             is_published=False,
-            creator=creator,
+            creator_id=creator,
+            start_date=challenge_data.start_date,
+            end_date=challenge_data.end_date,
+            task_type=challenge_data.task_type,
+            event_category=challenge_data.event_category,
+            challenge_reward_id=challenge_data.challenge_reward_id,
         )
         self.db.add(challenge)
         await self.db.commit()
@@ -136,57 +142,36 @@ class ChallengeService:
 
     async def update_challenge(
             self,
-            challenge_id: UUID,
-            challenge_data: ChallengeUpdate
+            challenge_data: ChallengeUpdate,
+            challenge_id: UUID = None,
+            creator_id: UUID = None
     ) -> Optional[Challenge]:
-        """Update challenge and its rules with proper error handling"""
-        challenge = await self.get_challenge(challenge_id)
-        if not challenge:
-            return None
+        """Create or update a challenge with proper status updates and error handling."""
 
         update_data = challenge_data.model_dump(exclude_unset=True)
 
-        # Handle rules updates first
-        if 'rules' in update_data and update_data['rules'] is not None:
-            try:
-                # Process new rules
-                for rule in update_data['rules'].get("new", []):
-                    await self.rule_repository.add_rule(challenge.id, rule)
+        # Create new challenge if no challenge_id provided
+        if not challenge_id:
+            challenge = await self.create_challenge(challenge_data, creator_id)
 
-                # Process deleted rules
-                for rule in update_data['rules'].get("deleted", []):
-                    if 'id' in rule:  # Safety check
-                        await self.rule_repository.delete_rule(rule['id'])
+        else:
+            challenge = await self.get_challenge(challenge_id)
+            if not challenge:
+                challenge = await self.create_challenge(challenge_data, creator_id)
 
-                # Process updated rules
-                for rule in update_data['rules'].get("updated", []):
-                    if 'id' in rule:  # Safety check
-                        await self.rule_repository.update_rule(rule['id'], rule)
-            except Exception as e:
-                await self.db.rollback()
-                raise HTTPException(
-                    status_code=400,
-                    detail=f"Failed to update rules: {str(e)}"
-                )
+            # Update challenge fields
+            for key, value in update_data.items():
+                if key != 'rules':  # Skip rules separately
+                    setattr(challenge, key, value)
 
-        # Handle status updates if dates change
-        if 'start_date' in update_data or 'end_date' in update_data:
-            now = datetime.utcnow()
-            start_date = update_data.get('start_date', challenge.start_date)
-            end_date = update_data.get('end_date', challenge.end_date)
+        # Update challenge status based on start and end dates
+        self._update_challenge_status(challenge, update_data)
 
-            if start_date > now:
-                update_data['status'] = ChallengeStatus.UPCOMING
-            elif end_date < now:
-                update_data['status'] = ChallengeStatus.COMPLETED
-            else:
-                update_data['status'] = ChallengeStatus.ACTIVE
+        # Recalculate progress and required fields
+        challenge.completion_percent = _calculate_progress(challenge)
+        challenge.required_fields = _get_remaining_fields(challenge)
 
-        # Update challenge fields
-        for key, value in update_data.items():
-            if key != 'rules':  # Skip rules as we've already processed them
-                setattr(challenge, key, value)
-
+        # Save changes to database
         try:
             await self.db.commit()
             await self.db.refresh(challenge)
@@ -197,6 +182,20 @@ class ChallengeService:
                 status_code=400,
                 detail=f"Failed to update challenge: {str(e)}"
             )
+
+    def _update_challenge_status(self, challenge: Challenge, update_data: dict):
+        """Helper to update challenge status based on dates."""
+        now = datetime.utcnow()
+        start_date = update_data.get('start_date', challenge.start_date)
+        end_date = update_data.get('end_date', challenge.end_date)
+
+        if start_date and end_date:
+            if start_date > now:
+                challenge.status = ChallengeStatus.UPCOMING
+            elif end_date < now:
+                challenge.status = ChallengeStatus.COMPLETED
+            else:
+                challenge.status = ChallengeStatus.ACTIVE
 
     async def delete_challenge(self, challenge_id: UUID) -> bool:
         challenge = await self.get_challenge(challenge_id)

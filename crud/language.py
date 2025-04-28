@@ -111,7 +111,7 @@ class LanguageCrud:
             raise HTTPException(status_code=404, detail="Language not found")
 
         if language.is_active and is_active or not language.is_active and not is_active:
-            raise HTTPException(status_code=400, detail=f"Language is already in the requested state: {state} ")
+            raise HTTPException(status_code=400, detail=f"Language is already in the requested state")
 
         language.is_active = is_active
         language.updated_at = datetime.utcnow()

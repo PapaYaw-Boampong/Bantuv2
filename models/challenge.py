@@ -41,7 +41,7 @@ class Challenge(SQLModel, table=True):
     )
     language_id: uuid.UUID = Field(foreign_key="language.id")
 
-    creator: uuid.UUID = Field(foreign_key="user.id")
+    creator_id: uuid.UUID = Field(foreign_key="user.id")
 
     challenge_reward_id: uuid.UUID = Field(foreign_key="challenge_reward.id")
 

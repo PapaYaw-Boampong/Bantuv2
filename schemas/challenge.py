@@ -2,18 +2,33 @@ from typing import Optional, List
 from datetime import datetime
 from pydantic import BaseModel, UUID4, ConfigDict
 from models.challenge import EventType, TaskType, EventCategory, ChallengeStatus
+from schemas.rewards import ChallengeRewardUpdate, ChallengeRewardResponse
 
 
 # Pydantic models for request/response
+
+
+class ChallengeRule(BaseModel):
+    rule_id: Optional[UUID4] = None
+    rule_title: str
+    rule_description: str
+    is_required: bool
+    model_config = ConfigDict(from_attributes=True)
+
+
+class ChallengeRulesAdd(BaseModel):
+    challenge_id: UUID4
+    rules: List[ChallengeRule]
+
+
 class ChallengeCreate(BaseModel):
     challenge_name: str
-    language_id: UUID4
     description: Optional[str] = None
 
 
 class Challenge(ChallengeCreate):
     id: UUID4
-    creator: UUID4
+    creator_id: UUID4
     event_type: EventType
     task_type: TaskType
     event_category: EventCategory
@@ -25,10 +40,12 @@ class Challenge(ChallengeCreate):
     challenge_reward: Optional[UUID4] = None  # Reference to the reward ID
     participation_count: Optional[int] = None
     completion_percent: Optional[float] = None
+    remaining_fields: Optional[List[str]] = None
     model_config = ConfigDict(from_attributes=True)
 
 
 class ChallengeUpdate(BaseModel):
+    id: Optional[UUID4] = None
     challenge_name: Optional[str] = None
     language_id: Optional[UUID4] = None
     description: Optional[str] = None
@@ -40,6 +57,22 @@ class ChallengeUpdate(BaseModel):
     status: Optional[ChallengeStatus] = None
     is_public: Optional[bool] = None
     is_published: Optional[bool] = None
+    creator_id: Optional[UUID4] = None
+    challenge_reward_id: Optional[UUID4] = None  # Reference to the reward ID
+    challenge_status: Optional[ChallengeStatus] = None
+    target_contribution_count: Optional[int] = None
+
+
+class SaveChallengeData(BaseModel):
+    challenge_data: Optional[ChallengeUpdate] = None
+    challenge_rules: Optional[List[ChallengeRule]] = None
+    challenge_reward: Optional[ChallengeRewardUpdate] = None
+
+
+class SaveChallengeResponse(BaseModel):
+    challenge: Challenge
+    reward: Optional[ChallengeRewardResponse] = None
+    rules: Optional[List[ChallengeRule]] = None
 
 
 class ChallengeParticipationCreate(BaseModel):
@@ -128,15 +161,3 @@ class AddChallengeReward(BaseModel):
     challenge_id: UUID4
     reward_id: UUID4
 
-
-class ChallengeRule(BaseModel):
-    rule_title: str
-    rule_description: str
-    is_required: bool
-
-    model_config = ConfigDict(from_attributes=True)
-
-
-class ChallengeRulesAdd(BaseModel):
-    challenge_id: UUID4
-    rules: List[ChallengeRule]

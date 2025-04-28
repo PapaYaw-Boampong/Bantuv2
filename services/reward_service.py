@@ -97,7 +97,7 @@ class RewardsService:
     # Challenge Reward methods
     async def create_challenge_reward(
             self,
-            reward_data: ChallengeRewardCreate
+            reward_data: ChallengeRewardUpdate
     ) -> ChallengeReward:
         reward = ChallengeReward(
             reward_type=reward_data.reward_type,
@@ -123,7 +123,7 @@ class RewardsService:
             return None
 
         challenge_service = ChallengeService(self.db)
-        published = await challenge_service.is_published(str(reward.challenge_id))
+        published = await challenge_service.is_published(reward.challenge_id)
 
         if published:
             raise Exception("Cannot update a published challenge reward")

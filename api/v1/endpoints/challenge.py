@@ -7,7 +7,8 @@ from database import get_session
 from models.challenge import Challenge, ChallengeStatus
 from models.user import User
 from schemas.challenge import (
-    ChallengeCreate,
+    SaveChallengeData,
+    SaveChallengeResponse,
     ChallengeUpdate,
     ChallengeParticipationCreate,
     ParticipationUpdate,
@@ -15,6 +16,7 @@ from schemas.challenge import (
     UserChallengeFilter
 )
 from services.challenge_service import ChallengeService
+from services.reward_service import RewardsService
 from api.v1.deps import get_current_active_user, get_current_superuser
 
 router = APIRouter()
@@ -25,14 +27,55 @@ def get_challenge_service(db: AsyncSession = Depends(get_session)):
     return ChallengeService(db)
 
 
-@router.post("/create", response_model=Challenge)
-async def create_challenge(
-        challenge_data: ChallengeCreate,
+def get_reward_service(db: AsyncSession = Depends(get_session)):
+    return RewardsService(db)
+
+
+@router.post("/save", response_model=SaveChallengeResponse)
+async def save_challenge(
+        save_data: SaveChallengeData,
         challenge_service: ChallengeService = Depends(get_challenge_service),
+        reward_service: RewardsService = Depends(get_reward_service),
         current_user: User = Depends(get_current_superuser)
 ):
     """Create a new challenge."""
-    return await challenge_service.create_challenge(challenge_data, current_user.id)
+
+    challenge_data = save_data.challenge_data
+    rules_data = save_data.challenge_rules
+    challenge_reward_data = save_data.challenge_reward
+
+    if not challenge_data:
+        raise HTTPException(status_code=400, detail="Challenge data must be provided.")
+
+    challenge_data.creator_id = current_user.id
+
+    # Save or update challenge reward if provided
+    reward = None
+    if challenge_reward_data:
+        if challenge_reward_data.id:
+            reward = await reward_service.update_challenge_reward(challenge_reward_data.id, challenge_reward_data)
+        else:
+            reward = await reward_service.create_challenge_reward(challenge_reward_data)
+
+        challenge_data.challenge_reward_id = reward.id
+
+    challenge = await challenge_service.update_challenge(
+        challenge_data,
+        challenge_data.id,
+        challenge_data.creator_id)
+
+    # Save or update challenge rules if provided
+    rules_data = []
+    if rules_data:
+        for rule in rules_data:
+            if rule.id:
+                await challenge_service.rule_repository.update_rule(rule.id, rule)
+            else:
+                await challenge_service.rule_repository.add_rule(challenge.id, rule)
+
+    rules_data = await challenge_service.rule_repository.get_rules(challenge.id)
+
+    return SaveChallengeResponse(challenge=challenge,challenge_reward=reward, challenge_rules=rules_data )
 
 
 @router.get("/{challenge_id}", response_model=Challenge)
@@ -62,7 +105,7 @@ async def get_challenges(
 
 
 @router.get("/participating", response_model=List[Challenge])
-async def get_challenges(
+async def get_challenges_participating(
         query_params: UserChallengeFilter = Depends(),
         challenge_service: ChallengeService = Depends(get_challenge_service),
         current_user: User = Depends(get_current_superuser)

@@ -16,12 +16,8 @@ class RewardType(str, Enum):
     RANK = "SWAG"
 
 
-# Branded merchandise, swag, etc.
-
-
 class RewardDistributionType(str, Enum):
     FIXED = "fixed"  # Each winner gets a specific amount
-    PERCENTAGE = "percentage"  # Split based on predefined percentages
     TIERED = "tiered"  # First place gets more, etc.
 
 
@@ -57,8 +53,9 @@ class ChallengeReward(SQLModel, table=True):
     id: uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True, index=True)
 
     reward_type: RewardType  # Cash, badge, leaderboard rank
-    reward_distribution_type: RewardDistributionType  # Fixed, percentage, tiered
+    reward_distribution_type: RewardDistributionType  = Field(default=RewardDistributionType.FIXED)  # Fixed, percentage, tiered
     reward_value: dict = Field(sa_column=Column(JSON))
+    description: str = Field(nullable=True)
     created_at: datetime = Field(default_factory=datetime.utcnow)
 
     # New Relationship to UserChallengeReward

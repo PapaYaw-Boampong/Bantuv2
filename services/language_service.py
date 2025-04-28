@@ -86,7 +86,7 @@ class LanguageService:
 
         return languages
 
-    async def update_language(self, language_id: str, update_data: Dict[str, Any]) -> Language:
+    async def update_language(self, language_id: uuid.UUID, update_data: Dict[str, Any]) -> Language:
         """
         Update a language if it exists.
         """

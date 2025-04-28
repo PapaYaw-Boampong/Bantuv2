@@ -55,6 +55,7 @@ class ChallengeRewardCreate(BaseModel):
 
 class ChallengeRewardUpdate(BaseModel):
     reward_type: Optional[RewardType] = None
+    reward_distribution_type: Optional[RewardDistributionType] = None
     reward_value: Optional[dict] = None
 
 
