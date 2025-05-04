@@ -1,15 +1,15 @@
 from typing import Optional, List
 from datetime import datetime
-from pydantic import BaseModel, UUID4, ConfigDict
+from pydantic import BaseModel, UUID4, ConfigDict, field_validator
 from models.challenge import EventType, TaskType, EventCategory, ChallengeStatus
-from schemas.rewards import ChallengeRewardUpdate, ChallengeRewardResponse
+from schemas.rewards import ChallengeRewardUpdate, ChallengeReward
 
 
 # Pydantic models for request/response
 
 
 class ChallengeRule(BaseModel):
-    rule_id: Optional[UUID4] = None
+    id: Optional[UUID4] = None
     rule_title: str
     rule_description: str
     is_required: bool
@@ -35,12 +35,12 @@ class Challenge(ChallengeCreate):
     start_date: datetime
     end_date: datetime
     status: ChallengeStatus
+    language_id: UUID4
     is_public: bool = True
     is_published: bool = False
-    challenge_reward: Optional[UUID4] = None  # Reference to the reward ID
-    participation_count: Optional[int] = None
+    challenge_reward_id: Optional[UUID4] = None  # Reference to the reward ID
+    participation_count: Optional[int] = 0
     completion_percent: Optional[float] = None
-    remaining_fields: Optional[List[str]] = None
     model_config = ConfigDict(from_attributes=True)
 
 
@@ -71,7 +71,7 @@ class SaveChallengeData(BaseModel):
 
 class SaveChallengeResponse(BaseModel):
     challenge: Challenge
-    reward: Optional[ChallengeRewardResponse] = None
+    reward: Optional[ChallengeReward] = None
     rules: Optional[List[ChallengeRule]] = None
 
 
@@ -131,6 +131,7 @@ class ChallengeSummary(BaseModel):
 
 
 class UserChallengeFilter(BaseModel):
+    creator_id: Optional[UUID4] = None
     skip: int = 0
     limit: int = 100
     status: Optional[ChallengeStatus] = None
@@ -145,7 +146,7 @@ class ChallengeDetailResponse(ChallengeSummary):
 
 
 class GetChallenges(BaseModel):
-    creator: Optional[UUID4] = None
+    creator_id: Optional[UUID4] = None
     language_id: Optional[UUID4] = None
     status: Optional[ChallengeStatus] = None
     event_type: Optional[EventType] = None
@@ -153,11 +154,10 @@ class GetChallenges(BaseModel):
     event_category: Optional[EventCategory] = None
     is_public: Optional[bool] = None
     is_published: Optional[bool] = None
-    skip: int = 0
-    limit: int = 100
+    skip: Optional[int] = 0  # int = 0
+    limit: Optional[int] = 100  # int = 100
 
 
 class AddChallengeReward(BaseModel):
     challenge_id: UUID4
     reward_id: UUID4
-

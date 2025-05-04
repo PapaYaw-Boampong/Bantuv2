@@ -217,8 +217,9 @@ class ChallengeRuleRepository:
     def __init__(self, db: AsyncSession):
         self.db = db
 
-    async def add_rule(self, challenge_id: UUID, rule_data: dict):
-        rule = ChallengeRule(**rule_data, challenge_id=challenge_id)
+    async def add_rule(self, challenge_id: UUID, rule_data: ChallengeRule) -> ChallengeRule:
+        rule_dict = rule_data.model_dump(exclude_unset=True)  # Convert Pydantic model to dict
+        rule = ChallengeRule(**rule_dict, challenge_id=challenge_id)
         self.db.add(rule)
         await self.db.commit()
         await self.db.refresh(rule)

@@ -33,10 +33,10 @@ class RewardsService:
         await self.db.refresh(milestone)
         return milestone
 
-    async def get_milestone(self, milestone_id: str) -> Optional[Milestone]:
+    async def get_milestone(self, milestone_id: uuid.UUID) -> Optional[Milestone]:
         return await self.db.get(Milestone, milestone_id)
 
-    async def update_milestone(self, milestone_id: str, milestone_data: MilestoneUpdate) -> Optional[Milestone]:
+    async def update_milestone(self, milestone_id: uuid.UUID, milestone_data: MilestoneUpdate) -> Optional[Milestone]:
         milestone = await self.get_milestone(milestone_id)
         if not milestone:
             return None
@@ -50,7 +50,7 @@ class RewardsService:
         await self.db.refresh(milestone)
         return milestone
 
-    async def delete_milestone(self, milestone_id: str) -> bool:
+    async def delete_milestone(self, milestone_id: uuid.UUID) -> bool:
         milestone = await self.get_milestone(milestone_id)
         if not milestone:
             return False
@@ -77,15 +77,15 @@ class RewardsService:
         await self.db.refresh(user_milestone)
         return user_milestone
 
-    async def get_user_milestone(self, user_milestone_id: str) -> Optional[UserMilestone]:
+    async def get_user_milestone(self, user_milestone_id: uuid) -> Optional[UserMilestone]:
         return await self.db.get(UserMilestone, user_milestone_id)
 
-    async def get_user_milestones(self, user_id: str) -> List[UserMilestone]:
+    async def get_user_milestones(self, user_id: uuid.UUID) -> List[UserMilestone]:
         query = select(UserMilestone).where(UserMilestone.user_id == user_id)
         result = await self.db.execute(query)
         return list(result.scalars().all())
 
-    async def delete_user_milestone(self, user_milestone_id: str) -> bool:
+    async def delete_user_milestone(self, user_milestone_id: uuid) -> bool:
         user_milestone = await self.get_user_milestone(user_milestone_id)
         if not user_milestone:
             return False
@@ -110,12 +110,12 @@ class RewardsService:
         return reward
 
     async def get_challenge_reward(
-            self, reward_id: str
+            self, reward_id: uuid.UUID
     ) -> Optional[ChallengeReward]:
         return await self.db.get(ChallengeReward, reward_id)
 
     async def update_challenge_reward(
-            self, reward_id: str,
+            self, reward_id: uuid.UUID,
             reward_data: ChallengeRewardUpdate
     ) -> Optional[ChallengeReward]:
         reward = await self.get_challenge_reward(reward_id)
@@ -137,7 +137,7 @@ class RewardsService:
         await self.db.refresh(reward)
         return reward
 
-    async def delete_challenge_reward(self, reward_id: str) -> bool:
+    async def delete_challenge_reward(self, reward_id: uuid.UUID) -> bool:
         reward = await self.get_challenge_reward(reward_id)
         if not reward:
             return False

@@ -81,7 +81,7 @@ async def get_user_by_id(
     Get user by ID (Admin only)
     """
     user_service = UserService(db)
-    profile = await get_user_profile(user_id)
+    profile = await user_service.get_detailed_user_by_id(user_id)
     return profile
 
 

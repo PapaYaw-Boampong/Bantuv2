@@ -1,6 +1,6 @@
 from typing import Optional, List
 from datetime import datetime
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, UUID4
 from models.rewards import RewardType, RewardDistributionType
 
 
@@ -39,9 +39,9 @@ class UserMilestoneCreate(BaseModel):
 
 
 class UserMilestoneResponse(BaseModel):
-    id: str
-    user_id: str
-    milestone_id: str
+    id: UUID4
+    user_id: UUID4
+    milestone_id: UUID4
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -54,13 +54,14 @@ class ChallengeRewardCreate(BaseModel):
 
 
 class ChallengeRewardUpdate(BaseModel):
+    id: Optional[UUID4] = None
     reward_type: Optional[RewardType] = None
     reward_distribution_type: Optional[RewardDistributionType] = None
     reward_value: Optional[dict] = None
 
 
-class ChallengeRewardResponse(BaseModel):
-    id: str
+class ChallengeReward(BaseModel):
+    id: UUID4
     reward_type: RewardType
     reward_distribution_type: RewardDistributionType
     reward_value: dict
@@ -72,19 +73,19 @@ class ChallengeRewardResponse(BaseModel):
 
 # User Challenge Reward schemas
 class UserChallengeRewardCreate(BaseModel):
-    user_id: str
-    reward_id: str
-    challenge_id: str
+    user_id: UUID4
+    reward_id: UUID4
+    challenge_id: UUID4
     rank: int
     awarded_at: datetime = datetime.utcnow()
 
 
 class UserChallengeRewardResponse(BaseModel):
-    id: str
-    user_id: str
-    reward_id: str
+    id: UUID4
+    user_id: UUID4
+    reward_id: UUID4
     rank: int
-    amount: Optional[float] = None # Derived from reward_value
+    amount: Optional[float] = None  # Derived from reward_value
     claimed: bool = False
     challenge_id: str
     awarded_at: datetime
@@ -97,5 +98,3 @@ class GetRewards(BaseModel):
     reward_type: Optional[RewardType] = None
     skip: int = 0
     limit: int = 100
-
-

@@ -2,6 +2,7 @@ from typing import List, Optional, Dict, Any, Tuple
 from datetime import datetime
 from uuid import UUID
 from fastapi import HTTPException
+from sqlalchemy import func
 from sqlmodel import select, and_, or_, desc
 from sqlalchemy.orm import selectinload
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -29,7 +30,7 @@ def _calculate_progress(challenge: Challenge) -> int:
         progress += 10
     if challenge.start_date and challenge.end_date:
         progress += 20
-    if challenge.reward_id:
+    if challenge.challenge_reward_id:
         progress += 20
     if challenge.language_id:
         progress += 20
@@ -55,6 +56,17 @@ def _get_remaining_fields(challenge: Challenge) -> List[str]:
     return required
 
 
+def _get_challenge_status(challenge: Any) -> ChallengeStatus:
+    now = datetime.utcnow()
+    if challenge.start_date > now:
+        return ChallengeStatus.UPCOMING
+    elif challenge.end_date < now:
+        return ChallengeStatus.COMPLETED
+    else:
+
+        return ChallengeStatus.ACTIVE
+
+
 class ChallengeService:
     def __init__(self, db: AsyncSession):
         self.db = db
@@ -66,11 +78,13 @@ class ChallengeService:
             challenge_data: ChallengeUpdate,
             creator: UUID
     ) -> Challenge:
+
+        status = _get_challenge_status(challenge_data)
         challenge = Challenge(
             challenge_name=challenge_data.challenge_name,
             description=challenge_data.description,
             language_id=challenge_data.language_id,
-            status=challenge_data.challenge_status,
+            status=status,
             is_public=True,
             is_published=False,
             creator_id=creator,
@@ -79,6 +93,7 @@ class ChallengeService:
             task_type=challenge_data.task_type,
             event_category=challenge_data.event_category,
             challenge_reward_id=challenge_data.challenge_reward_id,
+            event_type=challenge_data.event_type,
         )
         self.db.add(challenge)
         await self.db.commit()
@@ -119,7 +134,7 @@ class ChallengeService:
         challenge.completion_percent = new_progress
 
         # Update required fields
-        challenge.required_fields = _get_remaining_fields(challenge)
+        # challenge.required_fields = _get_remaining_fields(challenge)
 
         await self.db.commit()
         await self.db.refresh(challenge)
@@ -128,7 +143,7 @@ class ChallengeService:
     async def get_challenge(self, challenge_id: UUID) -> Optional[Challenge]:
 
         result = await self.db.get(Challenge, challenge_id)
-        challenge = result.scalars().first() if result else None
+        challenge = result if result else None
 
         if not challenge:
             raise HTTPException(status_code=404, detail="Challenge not found")
@@ -169,7 +184,7 @@ class ChallengeService:
 
         # Recalculate progress and required fields
         challenge.completion_percent = _calculate_progress(challenge)
-        challenge.required_fields = _get_remaining_fields(challenge)
+        # challenge.required_fields = _get_remaining_fields(challenge)
 
         # Save changes to database
         try:
@@ -208,7 +223,7 @@ class ChallengeService:
         else:
             raise ValueError("Cannot delete an active challenge")
 
-    async def list_challenges(self, query_params: GetChallenges) -> List[Challenge]:
+    async def list_challenges(self, query_params: GetChallenges, creator_id: UUID = None) -> List[Challenge]:
         query = select(Challenge)
 
         # Apply filters
@@ -230,8 +245,8 @@ class ChallengeService:
         if query_params.is_published is not None:
             query = query.where(Challenge.is_published == query_params.is_published)
 
-        if query_params.creator is not None:
-            query = query.where(Challenge.creator == query_params.creator)
+        if creator_id is not None:
+            query = query.where(Challenge.creator_id == creator_id)
 
         if query_params.language_id is not None:
             query = query.where(Challenge.language_id == query_params.language_id)
