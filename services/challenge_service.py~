@@ -1,7 +1,8 @@
 from typing import List, Optional, Dict, Any, Tuple
 from datetime import datetime
-import uuid
+from uuid import UUID
 from fastapi import HTTPException
+from sqlalchemy import func
 from sqlmodel import select, and_, or_, desc
 from sqlalchemy.orm import selectinload
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -12,8 +13,8 @@ from models.challenge import (
 from models.user import User
 from crud.challenge import ChallengeRuleRepository
 from schemas.challenge import (
-    ChallengeCreate, ChallengeUpdate, ChallengeParticipationCreate,
-    ChallengeParticipationUpdate, GetChallenges
+    ChallengeUpdate, ChallengeParticipationCreate,
+    ParticipationUpdate, GetChallenges, ChallengeRulesAdd, UserChallengeFilter
 )
 
 
@@ -29,7 +30,7 @@ def _calculate_progress(challenge: Challenge) -> int:
         progress += 10
     if challenge.start_date and challenge.end_date:
         progress += 20
-    if challenge.reward_id:
+    if challenge.challenge_reward_id:
         progress += 20
     if challenge.language_id:
         progress += 20
@@ -50,11 +51,20 @@ def _get_remaining_fields(challenge: Challenge) -> List[str]:
         required.append("start_date")
     if not challenge.end_date:
         required.append("end_date")
-    if not challenge.reward_id:
-        required.append("reward_id")
     if not challenge.language_id:
         required.append("language_id")
     return required
+
+
+def _get_challenge_status(challenge: Any) -> ChallengeStatus:
+    now = datetime.utcnow()
+    if challenge.start_date > now:
+        return ChallengeStatus.UPCOMING
+    elif challenge.end_date < now:
+        return ChallengeStatus.COMPLETED
+    else:
+
+        return ChallengeStatus.ACTIVE
 
 
 class ChallengeService:
@@ -63,27 +73,60 @@ class ChallengeService:
         self.rule_repository = ChallengeRuleRepository(db)
 
     # Challenge methods
-    async def create_challenge(self, challenge_data: ChallengeCreate) -> Challenge:
+    async def create_challenge(
+            self,
+            challenge_data: ChallengeUpdate,
+            creator: UUID
+    ) -> Challenge:
+
+        status = _get_challenge_status(challenge_data)
         challenge = Challenge(
             challenge_name=challenge_data.challenge_name,
             description=challenge_data.description,
-            status=ChallengeStatus.UPCOMING,
+            language_id=challenge_data.language_id,
+            status=status,
             is_public=True,
             is_published=False,
+            creator_id=creator,
+            start_date=challenge_data.start_date,
+            end_date=challenge_data.end_date,
+            task_type=challenge_data.task_type,
+            event_category=challenge_data.event_category,
+            challenge_reward_id=challenge_data.challenge_reward_id,
+            event_type=challenge_data.event_type,
         )
         self.db.add(challenge)
         await self.db.commit()
         await self.db.refresh(challenge)
         return challenge
 
-    async def update_progress(self, challenge_id: uuid.UUID, update_data: Dict[str, Any]) -> Optional[Challenge]:
+    async def add_challenge_rules(
+            self, data: ChallengeRulesAdd
+    ) -> Challenge:
+        challenge = await self.get_challenge(data.challenge_id)
+        if not challenge:
+            raise HTTPException(status_code=404, detail="Challenge not found")
+
+        if challenge.is_published:
+            raise HTTPException(status_code=400, detail="Cannot add new rules to a published challenge")
+
+        await self.rule_repository.add_rules(
+            challenge.id,
+            data.rules
+        )
+        return challenge
+
+    async def update_progress(
+            self,
+            challenge_id: UUID,
+            update_data: ChallengeUpdate) -> Optional[Challenge]:
         """Update challenge and recalculate completion %"""
-        challenge = await self.get_challenge(str(challenge_id))
+        challenge = await self.get_challenge(challenge_id)
         if not challenge:
             return None
 
         # Apply updates
-        for key, value in update_data.items():
+        for key, value in update_data.model_dump(exclude_unset=True).items():
             setattr(challenge, key, value)
 
         # Recalculate progress
@@ -91,20 +134,22 @@ class ChallengeService:
         challenge.completion_percent = new_progress
 
         # Update required fields
-        challenge.required_fields = _get_remaining_fields(challenge)
+        # challenge.required_fields = _get_remaining_fields(challenge)
 
         await self.db.commit()
         await self.db.refresh(challenge)
         return challenge
 
-    async def get_challenge(self, challenge_id: str) -> Optional[Challenge]:
+    async def get_challenge(self, challenge_id: UUID) -> Optional[Challenge]:
 
         result = await self.db.get(Challenge, challenge_id)
-        if not result:
+        challenge = result if result else None
+
+        if not challenge:
             raise HTTPException(status_code=404, detail="Challenge not found")
         return result
 
-    async def is_published(self, challenge_id: str) -> bool:
+    async def is_published(self, challenge_id: UUID) -> bool:
         challenge = await self.get_challenge(challenge_id)
         if not challenge:
             return False
@@ -112,57 +157,36 @@ class ChallengeService:
 
     async def update_challenge(
             self,
-            challenge_id: str,
-            challenge_data: ChallengeUpdate
+            challenge_data: ChallengeUpdate,
+            challenge_id: UUID = None,
+            creator_id: UUID = None
     ) -> Optional[Challenge]:
-        """Update challenge and its rules with proper error handling"""
-        challenge = await self.get_challenge(challenge_id)
-        if not challenge:
-            return None
+        """Create or update a challenge with proper status updates and error handling."""
 
         update_data = challenge_data.model_dump(exclude_unset=True)
 
-        # Handle rules updates first
-        if 'rules' in update_data and update_data['rules'] is not None:
-            try:
-                # Process new rules
-                for rule in update_data['rules'].get("new", []):
-                    await self.rule_repository.add_rule(challenge.id, rule)
+        # Create new challenge if no challenge_id provided
+        if not challenge_id:
+            challenge = await self.create_challenge(challenge_data, creator_id)
 
-                # Process deleted rules
-                for rule in update_data['rules'].get("deleted", []):
-                    if 'id' in rule:  # Safety check
-                        await self.rule_repository.delete_rule(rule['id'])
+        else:
+            challenge = await self.get_challenge(challenge_id)
+            if not challenge:
+                challenge = await self.create_challenge(challenge_data, creator_id)
 
-                # Process updated rules
-                for rule in update_data['rules'].get("updated", []):
-                    if 'id' in rule:  # Safety check
-                        await self.rule_repository.update_rule(rule['id'], rule)
-            except Exception as e:
-                await self.db.rollback()
-                raise HTTPException(
-                    status_code=400,
-                    detail=f"Failed to update rules: {str(e)}"
-                )
+            # Update challenge fields
+            for key, value in update_data.items():
+                if key != 'rules':  # Skip rules separately
+                    setattr(challenge, key, value)
 
-        # Handle status updates if dates change
-        if 'start_date' in update_data or 'end_date' in update_data:
-            now = datetime.utcnow()
-            start_date = update_data.get('start_date', challenge.start_date)
-            end_date = update_data.get('end_date', challenge.end_date)
+        # Update challenge status based on start and end dates
+        self._update_challenge_status(challenge, update_data)
 
-            if start_date > now:
-                update_data['status'] = ChallengeStatus.UPCOMING
-            elif end_date < now:
-                update_data['status'] = ChallengeStatus.COMPLETED
-            else:
-                update_data['status'] = ChallengeStatus.ACTIVE
+        # Recalculate progress and required fields
+        challenge.completion_percent = _calculate_progress(challenge)
+        # challenge.required_fields = _get_remaining_fields(challenge)
 
-        # Update challenge fields
-        for key, value in update_data.items():
-            if key != 'rules':  # Skip rules as we've already processed them
-                setattr(challenge, key, value)
-
+        # Save changes to database
         try:
             await self.db.commit()
             await self.db.refresh(challenge)
@@ -174,7 +198,21 @@ class ChallengeService:
                 detail=f"Failed to update challenge: {str(e)}"
             )
 
-    async def delete_challenge(self, challenge_id: str) -> bool:
+    def _update_challenge_status(self, challenge: Challenge, update_data: dict):
+        """Helper to update challenge status based on dates."""
+        now = datetime.utcnow()
+        start_date = update_data.get('start_date', challenge.start_date)
+        end_date = update_data.get('end_date', challenge.end_date)
+
+        if start_date and end_date:
+            if start_date > now:
+                challenge.status = ChallengeStatus.UPCOMING
+            elif end_date < now:
+                challenge.status = ChallengeStatus.COMPLETED
+            else:
+                challenge.status = ChallengeStatus.ACTIVE
+
+    async def delete_challenge(self, challenge_id: UUID) -> bool:
         challenge = await self.get_challenge(challenge_id)
         if not challenge:
             return False
@@ -183,7 +221,7 @@ class ChallengeService:
             await self.db.commit()
             return True
         else:
-            raise ValueError("Cannot delete an active")
+            raise ValueError("Cannot delete an active challenge")
 
     async def list_challenges(self, query_params: GetChallenges) -> List[Challenge]:
         query = select(Challenge)
@@ -207,13 +245,19 @@ class ChallengeService:
         if query_params.is_published is not None:
             query = query.where(Challenge.is_published == query_params.is_published)
 
+        if query_params.creator_id is not None:
+            query = query.where(Challenge.creator_id == query_params.creator_id)
+
+        if query_params.language_id is not None:
+            query = query.where(Challenge.language_id == query_params.language_id)
+
         # Apply pagination
         query = query.offset(query_params.skip).limit(query_params.limit)
 
         result = await self.db.execute(query)
         return list(result.scalars().all())
 
-    async def publish_challenge(self, challenge_id: str) -> Optional[Challenge]:
+    async def publish_challenge(self, challenge_id: UUID) -> Optional[Challenge]:
         """Mark a challenge as published, making it visible to users"""
         challenge = await self.get_challenge(challenge_id)
         if not challenge or challenge.completion_percent < 100:
@@ -230,7 +274,7 @@ class ChallengeService:
         await self.db.refresh(challenge)
         return challenge
 
-    async def unpublish_challenge(self, challenge_id: str) -> Optional[Challenge]:
+    async def unpublish_challenge(self, challenge_id: UUID) -> Optional[Challenge]:
         """Mark a challenge as unpublished, hiding it from users"""
         challenge = await self.get_challenge(challenge_id)
         if not challenge:
@@ -244,7 +288,7 @@ class ChallengeService:
         await self.db.refresh(challenge)
         return challenge
 
-    async def update_challenge_status(self, challenge_id: str, status: ChallengeStatus) -> Optional[Challenge]:
+    async def update_challenge_status(self, challenge_id: UUID, status: ChallengeStatus) -> Optional[Challenge]:
         """Manually update the status of a challenge"""
         challenge = await self.get_challenge(challenge_id)
         if not challenge:
@@ -267,7 +311,7 @@ class ChallengeService:
             raise ValueError("Challenge not found")
 
         # Check if the user is already participating
-        existing_participation = await self.db.execute(
+        result = await self.db.execute(
             select(ChallengeParticipation).where(
                 and_(
                     ChallengeParticipation.event_id == participation_data.event_id,
@@ -276,9 +320,10 @@ class ChallengeService:
             )
         )
 
+        result = await self.db.execute(...)
+        existing_participation = result.scalar_one_or_none()
         if existing_participation:
-            raise ValueError("User is already participating in this challenge")
-
+            raise ValueError("User is already participating")
         # Create the participation record
         participation = ChallengeParticipation(
             event_id=participation_data.event_id,
@@ -296,10 +341,10 @@ class ChallengeService:
 
         return participation, challenge
 
-    async def leave_challenge(self, event_id: str, user_id: str) -> bool:
+    async def leave_challenge(self, event_id: UUID, user_id: UUID) -> bool:
         """Remove a user from a challenge and decrement the participant count"""
         # Find the participation record
-        participation = await self.db.execute(
+        result = await self.db.execute(
             select(ChallengeParticipation).where(
                 and_(
                     ChallengeParticipation.event_id == event_id,
@@ -308,6 +353,7 @@ class ChallengeService:
             )
         )
 
+        participation = result.scalar_one_or_none()
         if not participation:
             return False
 
@@ -327,8 +373,11 @@ class ChallengeService:
 
         return True
 
-    async def get_challenge_participation(self, event_id: str,
-                                          user_id: str) -> Optional[ChallengeParticipation]:
+    async def get_challenge_participation(
+            self,
+            event_id: UUID,
+            user_id: UUID
+    ) -> Optional[ChallengeParticipation]:
         """Get a user's participation record for a specific challenge"""
         result = await self.db.execute(
             select(ChallengeParticipation).where(
@@ -341,27 +390,70 @@ class ChallengeService:
         records = list(result.scalars().all())
         return records[0] if records else None
 
-    async def update_participation_stats(self,
-                                         event_id: str,
-                                         user_id: str,
-                                         stats_data: ChallengeParticipationUpdate) -> Optional[ChallengeParticipation]:
-        """Update a user's statistics for a challenge"""
-        participation = await self.get_challenge_participation(event_id, user_id)
-        if not participation:
-            return None
+    async def update_challenge_participation_stats(
+            self,
+            participation: ChallengeParticipation,
+            hours: int = 0,
+            sentences: int = 0,
+            tokens: int = 0,
+            is_contribution: bool = False,
+            is_evaluation: bool = False,
+            accepted: bool = False,
+            points: int = 0
+    ) -> ChallengeParticipation:
+        participation.total_points += points
+        if is_contribution:
+            participation.contribution_count += 1
+            if accepted:
+                participation.accepted_contributions += 1
 
-        update_data = stats_data.model_dump(exclude_unset=True)
-        for key, value in update_data.items():
-            setattr(participation, key, value)
+        if is_evaluation:
+            participation.total_hours_speech += hours
+            participation.total_sentences_translated += sentences
+            participation.total_tokens_produced += tokens
+
+            participation.evaluation_count += 1
+            if accepted:
+                participation.accepted_evaluations += 1
+
+        # Update scores
+        if participation.contribution_count:
+            participation.contribution_acceptance_score = (
+                    participation.accepted_contributions / participation.contribution_count
+            )
+        if participation.evaluation_count:
+            participation.evaluation_acceptance_score = (
+                    participation.accepted_evaluations / participation.evaluation_count
+            )
 
         participation.updated_at = datetime.utcnow()
 
-        self.db.add(participation)
         await self.db.commit()
         await self.db.refresh(participation)
         return participation
 
-    async def get_challenge_participants(self, event_id: str, skip: int = 0, limit: int = 100
+    async def update_participation_stats(
+            self,
+            event_id: UUID,
+            user_id: UUID,
+            stats_data: ParticipationUpdate
+    ) -> Optional[ChallengeParticipation]:
+        participation = await self.get_challenge_participation(event_id, user_id)
+        if not participation:
+            return None
+
+        return await self.update_challenge_participation_stats(
+            participation,
+            hours=stats_data.total_hours_speech,
+            sentences=stats_data.total_sentences_translated,
+            tokens=stats_data.total_tokens_produced,
+            is_contribution=stats_data.is_contribution,
+            is_evaluation=stats_data.is_evaluation,
+            points=stats_data.total_points,
+            accepted=stats_data.accepted
+        )
+
+    async def get_challenge_participants(self, event_id: UUID, skip: int = 0, limit: int = 100
                                          ) -> List[ChallengeParticipation]:
         """Get all participants for a challenge"""
         query = select(ChallengeParticipation).where(ChallengeParticipation.event_id == event_id)
@@ -371,78 +463,59 @@ class ChallengeService:
 
     async def get_user_challenges(
             self,
-            user_id: str,
-            skip: int = 0,
-            limit: int = 100,
-            *,
-            status: Optional[ChallengeStatus] = None,
-            include_challenge_details: bool = True
+            user_id: UUID,
+            filters: UserChallengeFilter
     ) -> List[ChallengeParticipation]:
-        """Get all challenges a user is participating in with optional filtering
+        """Get all challenges a user is participating in with optional filtering"""
 
-        Args:
-            user_id: ID of the user
-            skip: Pagination offset
-            limit: Maximum number of results
-            status: Filter by challenge status
-            include_challenge_details: Whether to load full challenge data
-
-        Returns:
-            List of ChallengeParticipation records with related Challenge data
-        """
         query = select(ChallengeParticipation).where(
             ChallengeParticipation.user_id == user_id
         )
-        if include_challenge_details:
+
+        if filters.include_challenge_details:
             query = query.options(
                 selectinload(ChallengeParticipation.challenge).options(
-                    selectinload(Challenge.language),  # Use the relationship attribute
-                    selectinload(Challenge.reward)  # Not the model class
+                    selectinload(Challenge.language),
+                    selectinload(Challenge.reward)
                 )
             )
-            if status:
-                query = query.join(Challenge).where(
-                    Challenge.status == status
-                )
 
-            query = query.order_by(
-                ChallengeParticipation.updated_at.desc()
-            ).offset(skip).limit(limit)
+        if filters.status:
+            query = query.join(Challenge).where(
+                Challenge.status == filters.status
+            )
+
+        query = query.order_by(
+            ChallengeParticipation.updated_at.desc()
+        ).offset(filters.skip).limit(filters.limit)
 
         result = await self.db.execute(query)
-
         return list(result.scalars().all())
 
-    async def increment_challenge_contribution_count(self, event_id: str) -> Optional[Challenge]:
-        """Increment the contribution count for a challenge"""
-        challenge = await self.get_challenge(event_id)
-        if not challenge:
-            return None
-
-        challenge.contribution_count += 1
-        self.db.add(challenge)
-        await self.db.commit()
-        await self.db.refresh(challenge)
-        return challenge
-
     # Challenge leaderboard methods
-    async def get_challenge_leaderboard(self, event_id: str, skip: int = 0, limit: int = 10
-                                        ) -> List[Dict[str, Any]]:
+    async def get_challenge_leaderboard(
+            self, event_id: UUID, skip: int = 0, limit: int = 10
+    ) -> Dict[str, Any]:
         """Get the leaderboard for a challenge, sorted by total points"""
-        # Join ChallengeParticipation with User to get usernames
-        query = select(
-            ChallengeParticipation, User.username, User.fullname
-        ).join(
-            User, ChallengeParticipation.user_id == User.id
-        ).where(
-            ChallengeParticipation.event_id == event_id
-        ).order_by(
-            desc(ChallengeParticipation.total_points)
-        ).offset(skip).limit(limit)
+
+        # Base query for total count
+        count_query = select(func.count()).select_from(
+            select(ChallengeParticipation).where(ChallengeParticipation.event_id == event_id).subquery()
+        )
+        total_count = (await self.db.execute(count_query)).scalar_one()
+
+        # Main query with join
+        query = (
+            select(ChallengeParticipation, User.username, User.fullname)
+            .join(User, ChallengeParticipation.user_id == User.id)
+            .where(ChallengeParticipation.event_id == event_id)
+            .order_by(desc(ChallengeParticipation.total_points))
+            .offset(skip)
+            .limit(limit)
+        )
 
         results = await self.db.execute(query)
 
-        # Format the results
         leaderboard = []
         for participation, username, fullname in results:
             leaderboard.append({
@@ -456,7 +529,12 @@ class ChallengeService:
                 "acceptance_rate": participation.acceptance_rate
             })
 
-        return leaderboard
+        return {
+            "items": leaderboard,
+            "skip": skip,
+            "limit": limit,
+            "has_next": skip + limit < total_count
+        }
 
     # Challenge status management
     async def update_challenge_statuses(self) -> int:

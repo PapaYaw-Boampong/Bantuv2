@@ -6,7 +6,6 @@ router = APIRouter()
 # Include all routers
 router.include_router(auth.router, prefix="/auth", tags=["Authentication"])
 router.include_router(user.router, prefix="/user", tags=["User Management"])
-
 router.include_router(challenge.router, prefix="/challenges", tags=["Challenges"])
 # router.include_router(contribution.router, prefix="/contribution", tags=["Contributions"])
 router.include_router(language.router, prefix="/language", tags=["Languages"])

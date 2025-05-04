@@ -20,7 +20,7 @@ router = APIRouter()
 # -------------------- Language Routes --------------------
 
 @router.post(
-    "/languages",
+    "/new",
     response_model=LanguageCreate,
     status_code=status.HTTP_201_CREATED,
     summary="Create a new language"
@@ -36,38 +36,8 @@ async def create_language(
     return await language_service.create_language(language_data)
 
 
-@router.get(
-    "/languages",
-    response_model=List[LanguageRead],
-    summary="Get all languages"
-)
-async def read_languages(
-        db: AsyncSession = Depends(get_session),
-        skip: int = Query(0, ge=0),
-        limit: int = Query(100, ge=1, le=100),
-        current_user: User = Depends(get_current_active_user)
-) -> Any:
-    language_service = LanguageService(db)
-    """Retrieve all languages with pagination."""
-    return await language_service.get_all_languages(skip, limit)
-
-
-@router.get(
-    "/languages/{language_id}",
-    response_model=LanguageRead,
-    summary="Get a language by ID"
-)
-async def read_language(
-        db: AsyncSession = Depends(get_session),
-        language_id: str = Path(...)
-) -> Any:
-    language_service = LanguageService(db)
-    """Get a language by ID."""
-    return await language_service.get_language(term=language_id)
-
-
 @router.put(
-    "/languages/{language_id}",
+    "/{language_id}",
     response_model=LanguageUpdate,
     summary="Update a language"
 )
@@ -82,26 +52,73 @@ async def update_language(
     return await language_service.update_language(language_id, language_in.model_dump())
 
 
-@router.delete(
-    "/languages/{language_id}",
+@router.put(
+    "/activate/{language_id}",
     status_code=status.HTTP_204_NO_CONTENT,
-    summary="Delete a language"
+    summary="activate a language"
 )
-async def delete_language(
+async def activate_language(
         db: AsyncSession = Depends(get_session),
         language_id: str = Path(...),
         current_user: User = Depends(get_current_superuser)
 ) -> None:
     """Delete a language (admin only)."""
     language_service = LanguageService(db)
-    await language_service.delete_language(language_id)
+    await language_service.activate_language(language_id)
+
+
+@router.put(
+    "/deactivate/{language_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    summary="deactivate a language"
+)
+async def deactivate_language(
+        db: AsyncSession = Depends(get_session),
+        language_id: str = Path(...),
+        current_user: User = Depends(get_current_superuser)
+) -> None:
+    """Delete a language (admin only)."""
+    language_service = LanguageService(db)
+    await language_service.deactivate_language(language_id)
+
+
+@router.get(
+    "/languages",
+    response_model=List[LanguageRead],
+    summary="Get all languages"
+)
+async def read_languages(
+        db: AsyncSession = Depends(get_session),
+        skip: int = Query(0, ge=0),
+        limit: int = Query(100, ge=1, le=100),
+        current_user: User = Depends(get_current_active_user)
+) -> Any:
+
+    language_service = LanguageService(db)
+    """Retrieve all languages with pagination."""
+    return await language_service.get_all_languages(skip, limit)
+
+
+@router.get(
+    "/{language_id}",
+    response_model=LanguageRead,
+    summary="Get a language by ID"
+)
+async def read_language(
+        db: AsyncSession = Depends(get_session),
+        language_id: str = Path(...)
+) -> Any:
+
+    language_service = LanguageService(db)
+    """Get a language by ID."""
+    return await language_service.get_language(term=language_id)
 
 
 # -------------------- UserLanguage Routes --------------------
 
 @router.post(
-    "/user-languages/me",
-    response_model=UserLanguageCreate,
+    "/userlanguages/me",
+    response_model=UserLanguageRead,
     status_code=status.HTTP_201_CREATED,
     summary="Assign a language to a user"
 )
@@ -119,7 +136,7 @@ async def assign_language_to_user(
 
 
 @router.get(
-    "/user-languages/me",
+    "/userlanguages/me",
     response_model=List[UserLanguageRead],
     summary="Get languages assigned to a user"
 )
@@ -129,11 +146,11 @@ async def get_languages_by_user(
 ) -> Any:
     """Retrieve languages assigned to a specific user."""
     language_service = LanguageService(db)
-    return await language_service.get_user_languages(str(current_user.id))
+    return await language_service.get_user_languages(current_user.id)
 
 
 @router.delete(
-    "/user-languages/{user_language_id}",
+    "/userlanguages/{user_language_id}",
     status_code=status.HTTP_204_NO_CONTENT,
     summary="Delete user-language relationship"
 )

@@ -9,7 +9,6 @@ class Token(BaseModel):
     refresh_token: str  # Add refresh token
     token_type: str = "bearer"  # Default to "bearer"
     expires_in: int  # Expiration time in minutes
-    role: int = 1  # User role (e.g., admin, user, etc.)
 
 
 # Define a schema for the refresh token request
@@ -37,3 +36,6 @@ class LogoutRequest(BaseModel):
     Schema for logout request
     """
     refresh_token: str
+
+
+    
