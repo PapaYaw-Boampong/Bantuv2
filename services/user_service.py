@@ -164,6 +164,7 @@ class UserService:
             sentences_translated: int = 0,
             tokens_produced: int = 0,
             points: int = 0
+            
     ) -> User:
         """
         Record a user's contribution activity and update their statistics

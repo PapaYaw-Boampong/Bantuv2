@@ -77,7 +77,7 @@ def correct_translation(final_translation: str) -> str:
     
     return fine_tuned_tokenizer.decode(outputs[0], skip_special_tokens=True).strip()
 
-@app.post("/submit_translation/")
+@app.post("/submit_translation/") 
 def submit_translation(source_text: str, translation: str, username: str, db: Session = Depends(get_db)):
     user = db.query(User).filter(User.username == username).first()
     if not user:
