@@ -1,0 +1,166 @@
+from typing import Optional, List
+from pydantic import BaseModel, EmailStr, Field, field_validator, UUID4, ConfigDict
+from datetime import datetime
+from schemas.token import Token
+
+
+# Base User schema with common attributes
+class UserBase(BaseModel):
+    username: Optional[str] = None
+    email: Optional[EmailStr] = None
+    is_active: Optional[bool] = True
+    fullname: Optional[str] = None
+
+
+# Schema for user creation
+class UserCreate(BaseModel):
+    username: str
+    fullname: str
+    country: str
+    email: EmailStr
+    password: str
+
+    @classmethod
+    @field_validator('email')
+    def validate_email(cls, v):
+        if not v:
+            raise ValueError('Email cannot be empty')
+
+        # Email is already validated by EmailStr, but we can add custom rules
+        if len(v) > 100:
+            raise ValueError('Email must be less than 100 characters')
+
+        # Check for common domains if needed
+        allowed_domains = ['gmail.com', 'yahoo.com', 'outlook.com', 'hotmail.com', 'ashesi.edu.gh']
+        domain = v.split('@')[-1].lower()
+        if domain not in allowed_domains:
+            raise ValueError(f'Email domain not supported. Please use one of: {", ".join(allowed_domains)}')
+
+        return v
+
+    @classmethod
+    @field_validator('password')
+    def password_validation(cls, v):
+        if len(v) < 8:
+            raise ValueError('Password must be at least 8 characters')
+
+        if not any(char.isupper() for char in v):
+            raise ValueError('Password must contain at least one uppercase letter')
+
+        if not any(char.islower() for char in v):
+            raise ValueError('Password must contain at least one lowercase letter')
+
+        if not any(char.isdigit() for char in v):
+            raise ValueError('Password must contain at least one number')
+
+        special_chars = "!@#$%^&*()-_=+[]{}|;:,.<>?/~`"
+        if not any(char in special_chars for char in v):
+            raise ValueError(f'Password must contain at least one special character ({special_chars})')
+
+        # Check for common passwords (you might want to expand this list)
+        common_passwords = ['password', 'password123', '12345678', 'qwerty123']
+        if v.lower() in common_passwords:
+            raise ValueError('This password is too common. Please choose a stronger password')
+
+        return v
+
+
+# Schema for user update
+class UserUpdate(BaseModel):
+    username: Optional[str] = None
+    fullname: Optional[str] = None
+    country: Optional[str] = None
+    email: Optional[EmailStr] = None
+
+    model_config = ConfigDict(from_attributes=True, extra='forbid')
+
+
+# Schema for changing password
+class ChangePasswordRequest(BaseModel):
+    current_password: str
+    new_password: str
+
+    @field_validator('new_password')
+    def password_min_length(cls, v):
+        if len(v) < 8:
+            raise ValueError('New password must be at least 8 characters')
+        return v
+
+
+class ChangePasswordResponse(BaseModel):
+    success: bool
+
+
+# Base response schema for User
+class UserResponse(BaseModel):
+    id: str
+    username: str
+    fullname: str
+    email: str
+    country: str
+    is_active: bool
+    role: int
+    created_at: datetime
+    updated_at: datetime
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class RegisterResponse(BaseModel):
+    user: UserResponse
+    access_tokens: Token
+
+
+# Extended response schema for User profile
+class UserProfileResponse(UserResponse):
+    total_hours_speech: int
+    total_sentences_translated: int
+    total_tokens_produced: int
+
+    acceptance_rate: Optional[float] = None
+    country: str = None
+    milestones: List[str] = []  # List of milestone IDs
+    bounties_claimed: List[str] = []  # List of bounty IDs
+    challenge_rewards: List[str] = []  # List of challenge reward IDs
+
+
+# Schema for top contributors response
+class TopContributorResponse(BaseModel):
+    id: str
+    username: str
+    reputation_score: float
+    contribution_count: int
+    accepted_contributions: int
+    total_points: int
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+# User Statistics Update Schema
+class UserStatisticsUpdate(BaseModel):
+    translation_contribution_count: Optional[int] = None
+    translation_accepted_contributions: Optional[int] = None
+    translation_reputation_score: Optional[float] = None
+    transcription_contribution_count: Optional[int] = None
+    transcription_accepted_contributions: Optional[int] = None
+    transcription_reputation_score: Optional[float] = None
+    total_hours_speech: Optional[int] = None
+    total_sentences_translated: Optional[int] = None
+    total_tokens_produced: Optional[int] = None
+
+
+# User Statistics Response Schema
+class UserStatisticsResponse(BaseModel):
+    user_id: str
+    translation_contribution_count: int
+    translation_accepted_contributions: int
+    translation_reputation_score: float
+    transcription_contribution_count: int
+    transcription_accepted_contributions: int
+    transcription_reputation_score: float
+    total_hours_speech: int
+    total_sentences_translated: int
+    total_tokens_produced: int
+    updated_at: datetime
+
+    model_config = ConfigDict(from_attributes=True)

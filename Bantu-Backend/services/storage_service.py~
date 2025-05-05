@@ -1,0 +1,11 @@
+from sqlmodel import select
+from schemas.storage import MediaFileRead, Mediafile
+
+class StorageService:
+    def __init__(self, db):
+        self.db = db
+
+    async def get_media_file_by_id(db, media_id):
+        stmt = select(MediaFile).where(MediaFile.id == media_id)
+        result = await db.execute(stmt)
+        return result.scalar_one_or_none()
