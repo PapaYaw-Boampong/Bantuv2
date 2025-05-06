@@ -3,6 +3,7 @@ from datetime import datetime
 from uuid import UUID
 from fastapi import HTTPException
 from sqlalchemy import func
+from sqlalchemy.orm.exc import NoResultFound
 from sqlmodel import select, and_, or_, desc
 from sqlalchemy.orm import selectinload
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -14,7 +15,8 @@ from models.user import User
 from crud.challenge import ChallengeRuleRepository
 from schemas.challenge import (
     ChallengeUpdate, ChallengeParticipationCreate,
-    ParticipationUpdate, GetChallenges, ChallengeRulesAdd, UserChallengeFilter
+    ParticipationUpdate, GetChallenges, ChallengeRulesAdd,
+    UserChallengeStatsOut, ChallengeStatsOut
 )
 
 
@@ -303,7 +305,7 @@ class ChallengeService:
     # Challenge Participation methods
     async def join_challenge(self,
                              participation_data: ChallengeParticipationCreate
-                             ) -> Tuple[ChallengeParticipation, Challenge]:
+                             ) -> ChallengeParticipation:
         """Add a user to a challenge and increment the participant count"""
         # Check if the challenge exists
         challenge = await self.get_challenge(participation_data.event_id)
@@ -320,7 +322,6 @@ class ChallengeService:
             )
         )
 
-        result = await self.db.execute(...)
         existing_participation = result.scalar_one_or_none()
         if existing_participation:
             raise ValueError("User is already participating")
@@ -339,7 +340,7 @@ class ChallengeService:
         await self.db.refresh(participation)
         await self.db.refresh(challenge)
 
-        return participation, challenge
+        return participation
 
     async def leave_challenge(self, event_id: UUID, user_id: UUID) -> bool:
         """Remove a user from a challenge and decrement the participant count"""
@@ -464,30 +465,32 @@ class ChallengeService:
     async def get_user_challenges(
             self,
             user_id: UUID,
-            filters: UserChallengeFilter
-    ) -> List[ChallengeParticipation]:
-        """Get all challenges a user is participating in with optional filtering"""
+            filters: GetChallenges
+    ) -> List[Challenge]:
+        """Get all challenges a user is participating in, with optional filtering"""
 
-        query = select(ChallengeParticipation).where(
-            ChallengeParticipation.user_id == user_id
+        query = (
+            select(Challenge)
+            .join(ChallengeParticipation, Challenge.id == ChallengeParticipation.event_id)
+            .where(ChallengeParticipation.user_id == user_id)
         )
-
-        if filters.include_challenge_details:
-            query = query.options(
-                selectinload(ChallengeParticipation.challenge).options(
-                    selectinload(Challenge.language),
-                    selectinload(Challenge.reward)
-                )
-            )
-
         if filters.status:
-            query = query.join(Challenge).where(
-                Challenge.status == filters.status
-            )
+            query = query.where(Challenge.status == filters.status)
+        if filters.event_type:
+            query = query.where(Challenge.event_type == filters.event_type)
+        if filters.task_type:
+            query = query.where(Challenge.task_type == filters.task_type)
+        if filters.event_category:
+            query = query.where(Challenge.event_category == filters.event_category)
+        if filters.is_public is not None:
+            query = query.where(Challenge.is_public == filters.is_public)
+        if filters.is_published is not None:
+            query = query.where(Challenge.is_published == filters.is_published)
+        if filters.language_id is not None:
+            query = query.where(Challenge.language_id == filters.language_id)
 
-        query = query.order_by(
-            ChallengeParticipation.updated_at.desc()
-        ).offset(filters.skip).limit(filters.limit)
+        query = query.order_by(ChallengeParticipation.updated_at.desc())
+        query = query.offset(filters.skip).limit(filters.limit)
 
         result = await self.db.execute(query)
         return list(result.scalars().all())
@@ -526,7 +529,8 @@ class ChallengeService:
                 "hours_speech": participation.total_hours_speech,
                 "sentences_translated": participation.total_sentences_translated,
                 "tokens_produced": participation.total_tokens_produced,
-                "acceptance_rate": participation.acceptance_rate
+                "contribution_acceptance_rate": participation.contribution_acceptance_score,
+                "evaluation_acceptance_rate": participation.evaluation_acceptance_score,
             })
 
         return {
@@ -578,3 +582,65 @@ class ChallengeService:
         await self.db.commit()
 
         return len(upcoming_challenges) + len(active_challenges)
+
+    async def get_user_challenge_stats(self, user_id: UUID, challenge_id: UUID) -> UserChallengeStatsOut:
+        participation = await self.get_challenge_participation(challenge_id, user_id)
+        if not participation:
+            raise HTTPException(status_code=404, detail="User not participating in this challenge.")
+
+        # Get leaderboard to determine user rank (could be optimized with a single rank query)
+        leaderboard = await self.get_challenge_leaderboard(challenge_id)
+        leaderboard = leaderboard["items"]
+        rank = next((i + 1 for i, row in enumerate(leaderboard) if row["user_id"] == user_id), None)
+
+        return UserChallengeStatsOut(
+            user_id=user_id,
+            event_id=challenge_id,
+            rank=rank,
+            total_points=participation.total_points,
+            contribution_count=participation.contribution_count,
+            accepted_contributions=participation.accepted_contributions,
+            evaluation_count=participation.evaluation_count,
+            accepted_evaluations=participation.accepted_evaluations,
+            contribution_acceptance_score=participation.contribution_acceptance_score,
+            evaluation_acceptance_score=participation.evaluation_acceptance_score,
+            total_hours_speech=participation.total_hours_speech,
+            total_sentences_translated=participation.total_sentences_translated,
+            total_tokens_produced=participation.total_tokens_produced,
+            created_at=participation.created_at,
+            updated_at=participation.updated_at,
+        )
+
+    async def get_challenge_aggregates(self, challenge_id: UUID) -> ChallengeStatsOut:
+        stmt = (
+            select(
+                func.count().label("participant_count"),
+                func.sum(ChallengeParticipation.contribution_count).label("contribution_count"),
+                func.sum(ChallengeParticipation.evaluation_count).label("evaluation_count"),
+                func.avg(ChallengeParticipation.contribution_acceptance_score).label("avg_contribution_acceptance"),
+                func.avg(ChallengeParticipation.evaluation_acceptance_score).label("avg_evaluation_acceptance"),
+                func.sum(ChallengeParticipation.total_hours_speech).label("total_hours_speech"),
+                func.sum(ChallengeParticipation.total_sentences_translated).label("total_sentences_translated"),
+                func.sum(ChallengeParticipation.total_tokens_produced).label("total_tokens_produced"),
+            )
+            .where(ChallengeParticipation.event_id == challenge_id)
+        )
+
+        try:
+            result = await self.db.execute(stmt)
+            row = result.one()
+        except NoResultFound:
+            raise HTTPException(status_code=404, detail="No stats found for this challenge.")
+
+        return ChallengeStatsOut(
+            event_id=challenge_id,
+            participant_count=row.participant_count or 0,
+            contribution_count=row.contribution_count or 0,
+            evaluation_count=row.evaluation_count or 0,
+            avg_contribution_acceptance=float(row.avg_contribution_acceptance or 0),
+            avg_evaluation_acceptance=float(row.avg_evaluation_acceptance or 0),
+            total_hours_speech=int(row.total_hours_speech or 0),
+            total_sentences_translated=int(row.total_sentences_translated or 0),
+            total_tokens_produced=int(row.total_tokens_produced or 0),
+            completion_percent=None,  # You can calculate this from a challenge goal table if needed
+        )

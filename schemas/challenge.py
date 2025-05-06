@@ -161,3 +161,34 @@ class GetChallenges(BaseModel):
 class AddChallengeReward(BaseModel):
     challenge_id: UUID4
     reward_id: UUID4
+
+
+class UserChallengeStatsOut(BaseModel):
+    user_id: UUID4
+    event_id: UUID4
+    rank: Optional[int]
+    total_points: int
+    contribution_count: int
+    accepted_contributions: int
+    evaluation_count: int
+    accepted_evaluations: int
+    contribution_acceptance_score: Optional[float]
+    evaluation_acceptance_score: Optional[float]
+    total_hours_speech: Optional[int] = None
+    total_sentences_translated: Optional[int] = None
+    total_tokens_produced: Optional[int] = None
+    created_at: datetime
+    updated_at: datetime
+
+
+class ChallengeStatsOut(BaseModel):
+    event_id: UUID4
+    participant_count: int
+    contribution_count: int
+    evaluation_count: int
+    avg_contribution_acceptance: float
+    avg_evaluation_acceptance: float
+    total_hours_speech: Optional[int] = None
+    total_sentences_translated: Optional[int] = None
+    total_tokens_produced: Optional[int] = None
+    completion_percent: Optional[float] = None

@@ -116,14 +116,15 @@ class RewardsService:
 
     async def update_challenge_reward(
             self, reward_id: uuid.UUID,
-            reward_data: ChallengeRewardUpdate
+            reward_data: ChallengeRewardUpdate,
+            challenge_id: uuid.UUID = None
     ) -> Optional[ChallengeReward]:
         reward = await self.get_challenge_reward(reward_id)
         if not reward:
             return None
 
         challenge_service = ChallengeService(self.db)
-        published = await challenge_service.is_published(reward.challenge_id)
+        published = await challenge_service.is_published(challenge_id)
 
         if published:
             raise Exception("Cannot update a published challenge reward")

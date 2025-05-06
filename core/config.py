@@ -45,7 +45,7 @@ class Settings(BaseModel):
 
     # Security settings
     JWT_ALGORITHM: str = os.getenv("JWT_ALGORITHM", "HS256")
-    ACCESS_TOKEN_EXPIRE_MINUTES: int = int(os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES", "15"))
+    ACCESS_TOKEN_EXPIRE_MINUTES: int = int(os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES", "120"))
     REFRESH_TOKEN_EXPIRE_DAYS: int = int(os.getenv("REFRESH_TOKEN_EXPIRE_DAYS", "5"))
     ACCESS_SECRET_KEY: str = os.getenv("ACCESS_SECRET_KEY", "your_default_secret_key")
     REFRESH_SECRET_KEY: str = os.getenv("REFRESH_SECRET_KEY", "your_other_default_refresh_secret_key")

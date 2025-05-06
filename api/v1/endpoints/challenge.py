@@ -1,5 +1,4 @@
 import uuid
-from fastapi import Query
 from fastapi import APIRouter, Depends, HTTPException, Query, Path
 from sqlalchemy.ext.asyncio import AsyncSession
 from typing import List, Dict, Any, Optional
@@ -13,6 +12,8 @@ from schemas.challenge import (
     ChallengeParticipationCreate,
     ParticipationUpdate,
     GetChallenges,
+    ChallengeStatsOut,
+    UserChallengeStatsOut,
     UserChallengeFilter
 )
 from services.challenge_service import ChallengeService
@@ -22,9 +23,13 @@ from api.v1.deps import get_current_active_user, get_current_superuser
 router = APIRouter()
 
 
-# Dependency
+# Dependencies
 def get_challenge_service(db: AsyncSession = Depends(get_session)):
     return ChallengeService(db)
+
+
+def get_reward_service(db: AsyncSession = Depends(get_session)):
+    return RewardsService(db)
 
 
 def is_valid_uuid(value: str) -> bool:
@@ -35,11 +40,11 @@ def is_valid_uuid(value: str) -> bool:
         return False
 
 
-def get_reward_service(db: AsyncSession = Depends(get_session)):
-    return RewardsService(db)
+# ==========================================
+# ROUTES WITH FIXED PATHS (more specific)
+# These must be defined before parameterized routes
+# ==========================================
 
-
-# Static Routes (defined first to take precedence)
 @router.post("/save", response_model=SaveChallengeResponse)
 async def save_challenge(
         save_data: SaveChallengeData,
@@ -64,8 +69,9 @@ async def save_challenge(
             reward = await reward_service.create_challenge_reward(challenge_reward_data)
         elif is_valid_uuid(str(challenge_reward_data.id)):
             reward = await reward_service.update_challenge_reward(
-                uuid.UUID(challenge_reward_data.id),
-                challenge_reward_data
+                challenge_reward_data.id,
+                challenge_reward_data,
+                challenge_id=challenge_data.id
             )
         else:
             raise HTTPException(status_code=400, detail="Invalid reward ID format")
@@ -85,8 +91,6 @@ async def save_challenge(
         challenge_data.creator_id)
 
     # Save or update challenge rules if provided
-    rules_data = []
-
     if rules_data:
         for rule in rules_data:
             if rule.id == "":
@@ -113,33 +117,6 @@ async def get_my_challenges(
         challenge_service: ChallengeService = Depends(get_challenge_service),
         current_user: User = Depends(get_current_active_user),
 ):
-    # Manual mapping for custom terms like "ongoing"
-
-    # status_map = {
-    #     "active": ChallengeStatus.ACTIVE,
-    #     "upcoming": ChallengeStatus.UPCOMING,
-    #     "completed": ChallengeStatus.COMPLETED,
-    #     None: None
-    # }
-    # task_type_map = {
-    #     "transcription": TaskType.TRANSCRIPTION,
-    #     "translation": TaskType.TRANSLATION,
-    #     "annotation": TaskType.ANNOTATION,
-    #     None: None
-    # }
-    #
-    # event_category_map = {
-    #     "time_based_competition": EventCategory.COMPETITION,
-    #     "bounty": EventCategory.BOUNTY,
-    #     None: None
-    # }
-    #
-    # event_type_map = {
-    #     "data_collection": EventType.DATA_COLLECTION,
-    #     "data_review": EventType.SAMPLE_REVIEW,
-    #     None: None
-    # }
-
     query_params = GetChallenges(
         status=status,
         event_type=event_type,
@@ -166,14 +143,32 @@ async def get_challenges(
 
 @router.get("/participating", response_model=List[Challenge])
 async def get_challenges_participating(
-        query_params: UserChallengeFilter = Depends(),
+        query_params: GetChallenges = Depends(),
         challenge_service: ChallengeService = Depends(get_challenge_service),
         current_user: User = Depends(get_current_active_user)
-
 ):
     """Get all challenges with filters and pagination."""
     return await challenge_service.get_user_challenges(user_id=current_user.id, filters=query_params)
 
+
+@router.post("/join", response_model=Dict[str, Any])
+async def join_challenge(
+        participation_data: ChallengeParticipationCreate,
+        challenge_service: ChallengeService = Depends(get_challenge_service),
+        current_user: User = Depends(get_current_active_user)
+):
+    """Join a challenge."""
+    try:
+        participation = await challenge_service.join_challenge(participation_data)
+        return {"message": "User joined challenge successfully", "challenge": participation}
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+# ==========================================
+# ROUTES WITH PATH PARAMETERS (less specific)
+# These should come after fixed path routes
+# ==========================================
 
 @router.get("/single/{challenge_id}", response_model=Challenge)
 async def get_challenge(
@@ -220,7 +215,6 @@ async def update_challenge(
         current_user: User = Depends(get_current_superuser)
 ):
     """Update a challenge's information."""
-
     try:
         challenge_uuid = uuid.UUID(challenge_id)
     except ValueError:
@@ -239,7 +233,6 @@ async def delete_challenge(
         current_user: User = Depends(get_current_superuser)
 ):
     """Delete a challenge if it is not active."""
-
     try:
         challenge_uuid = uuid.UUID(challenge_id)
     except ValueError:
@@ -250,20 +243,6 @@ async def delete_challenge(
         if success:
             return {"message": "Challenge deleted successfully"}
         raise HTTPException(status_code=400, detail="Challenge cannot be deleted")
-    except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
-
-
-@router.post("/join/{challenge_id}", response_model=Dict[str, Any])
-async def join_challenge(
-        participation_data: ChallengeParticipationCreate,
-        challenge_service: ChallengeService = Depends(get_challenge_service),
-        current_user: User = Depends(get_current_active_user)
-):
-    """Join a challenge."""
-    try:
-        participation, challenge = await challenge_service.join_challenge(participation_data)
-        return {"message": "User joined challenge successfully", "challenge": challenge}
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
 
@@ -339,27 +318,6 @@ async def get_challenge_participants(
     return await challenge_service.get_challenge_participants(challenge_uuid, skip, limit)
 
 
-@router.patch("/participants/{challenge_id}/{user_id}", response_model=Dict[str, Any])
-async def update_participant_stats(
-        challenge_id: str,
-        user_id: str,
-        update_data: ParticipationUpdate,
-        challenge_service: ChallengeService = Depends(get_challenge_service),
-        current_user: User = Depends(get_current_superuser)
-):
-    try:
-        challenge_uuid = uuid.UUID(challenge_id)
-        user_uuid = uuid.UUID(user_id)
-    except ValueError:
-        raise HTTPException(status_code=400, detail="Invalid challenge ID format")
-    """Update stats or role of a participant."""
-    updated = await challenge_service.update_participation_stats(
-        challenge_uuid,
-        user_uuid,
-        update_data)
-    return {"message": "Participant updated successfully", "participant": updated}
-
-
 @router.post("/publish/{challenge_id}", response_model=Challenge)
 async def publish_challenge(
         challenge_id: str,
@@ -389,3 +347,53 @@ async def unpublish_challenge(
 
     challenge = await challenge_service.unpublish_challenge(challenge_uuid)
     return challenge
+
+
+@router.patch("/participants/{challenge_id}/{user_id}", response_model=Dict[str, Any])
+async def update_participant_stats(
+        challenge_id: str,
+        user_id: str,
+        update_data: ParticipationUpdate,
+        challenge_service: ChallengeService = Depends(get_challenge_service),
+        current_user: User = Depends(get_current_superuser)
+):
+    """Update stats or role of a participant."""
+    try:
+        challenge_uuid = uuid.UUID(challenge_id)
+        user_uuid = uuid.UUID(user_id)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid challenge ID format")
+
+    updated = await challenge_service.update_participation_stats(
+        challenge_uuid,
+        user_uuid,
+        update_data)
+    return {"message": "Participant updated successfully", "participant": updated}
+
+
+@router.get("/{challenge_id}/userstats", response_model=UserChallengeStatsOut)
+async def get_my_challenge_stats(
+        challenge_id: str,
+        challenge_service: ChallengeService = Depends(get_challenge_service),
+        current_user=Depends(get_current_active_user),
+):
+    try:
+        challenge_uuid = uuid.UUID(challenge_id)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid challenge ID format ch-stats")
+    return await challenge_service.get_user_challenge_stats(user_id=current_user.id, challenge_id=challenge_uuid)
+
+
+@router.get("/{challenge_id}/stats", response_model=ChallengeStatsOut)
+async def get_challenge_aggregates(
+        challenge_id: str,
+        challenge_service: ChallengeService = Depends(get_challenge_service),
+        current_user=Depends(get_current_active_user),
+):
+    # Optional: Check that current_user is the creator/admin of the challenge
+    try:
+        challenge_uuid = uuid.UUID(challenge_id)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid challenge ID format: aggregation")
+
+    return await challenge_service.get_challenge_aggregates(challenge_id=challenge_uuid)

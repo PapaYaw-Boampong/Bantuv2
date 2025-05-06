@@ -28,7 +28,6 @@ class TranscriptionSample(SQLModel, table=True):
         primary_key=True,
         index=True
     )
-
     language_id: uuid.UUID = Field(foreign_key="language.id")
 
     evaluation_instance_id: Optional[uuid.UUID] = Field(
@@ -43,9 +42,12 @@ class TranscriptionSample(SQLModel, table=True):
     )
 
     transcription_text: str  # Stores the transcribed text
+
     category: str = Field(default=None, nullable=True)  # e.g., "daily conversation", "technical", "medical"
+
     created_at: datetime = Field(default_factory=datetime.utcnow)
     last_active_at: datetime = Field(default_factory=datetime.utcnow)
+
     active: bool = Field(default=False)  # Becomes True when assigned to a user
     eval: bool = Field(default=False)  # Becomes True when assigned to an evaluation instance
     store: int = Field(default=0)  # Store for the sample, used for tracking
@@ -123,16 +125,15 @@ class TranslationSample(SQLModel, table=True):
     )
 
     translated_text: str  # Final translated version of the original text
+
     created_at: datetime = Field(default_factory=datetime.utcnow)
+
     active: bool = Field(default=False)  # Becomes True when assigned to a user
     eval: bool = Field(default=False)  # Becomes True when assigned to an evaluation instance
 
     priority: int = Field(default=0)  # Priority for translation, higher means more important
 
-    # stores records for frequency of words in the translation and contribution frequencies
-    words: Dict[str, int] = Field(sa_column=Column(JSON), default_factory=dict)
-
-    store: int = Field(default=0)
+    seed_count: int = Field(default=0)
 
     # Relationships
     translation_seed_data: "TranslationSeedData" = Relationship(
@@ -214,7 +215,6 @@ class AnnotationSample(SQLModel, table=True):
         sa_column=Column(JSON),
         default=[]
     )
-    words: Dict[str, int] = Field(sa_column=Column(JSON), default_factory=dict)
 
     created_at: datetime = Field(default_factory=datetime.utcnow)
     active: bool = Field(default=False)
@@ -222,7 +222,7 @@ class AnnotationSample(SQLModel, table=True):
 
     priority: int = Field(default=0)  # Priority for annotation, higher means more important
 
-    store: int = Field(default=0)
+    seed_count: int = Field(default=0)
 
     # Relationships
     annotation_seed_data: "AnnotationSeedData" = Relationship(

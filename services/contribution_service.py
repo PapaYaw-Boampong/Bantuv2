@@ -33,7 +33,6 @@ from schemas.sample_data import (
     TranslationSeedCreate
 )
 
-
 from schemas.challenge import ParticipationUpdate
 
 
@@ -86,17 +85,16 @@ class ContributionManagementService:
             "user_id": user_id,
             "sample_id": sample_id,
             "created_at": datetime.utcnow(),
-            "active": True,
+            "active": False,
             "flagged": False,
-            "passed": False,
-            "upvotes": 1
+            "accepted": False,
+            "ancestors": [user_id],
         }
 
         language_service = LanguageService(self.db)
         from services.challenge_service import ChallengeService
         challenge_service = ChallengeService(self.db)
 
-        word_dict = {}
         stats_data = ParticipationUpdate(
             is_contribution=True,
         )
@@ -108,17 +106,18 @@ class ContributionManagementService:
         if contribution_type in {"annotation", "translation"}:
             contribution_data["target_text"] = data.target_text
             word_list = data.target_text.strip().lower().split()
-            for word in word_list:
-                word_dict[word] = word_dict.get(word, 0) + 1
 
             if contribution_type == "annotation":
+                contribution_data["img_url"] = data.img_url
                 token_count = len(word_list)
                 stats_data.total_tokens_produced = token_count
 
             elif contribution_type == "translation":
+                contribution_data["sample_text"] = data.sample_text
                 stats_data.total_sentences_translated = 1
 
         elif contribution_type == "transcription":
+            contribution_data["sample_text"] = data.sample_text
             contribution_data["target_url"] = data.target_url
             stats_data.total_hours_speech = data.speech_length
 
@@ -130,13 +129,12 @@ class ContributionManagementService:
 
         # Record contribution stats for challenge or globally
         if challenge_id:
-            stats_data.total_points = settings.POINTS_PER_CONTRIBUTION
             await challenge_service.update_participation_stats(
                 event_id=challenge_id,
                 user_id=user_id,
                 stats_data=stats_data
             )
-
+        # global stats
         await language_service.user_language_repository.update_language_stats(
             user_id=user_id,
             language_id=language_id,
@@ -146,13 +144,12 @@ class ContributionManagementService:
         from services.sample_data_service import SampleDataService
 
         # Update sample with contribution metadata
-        if contribution_type in {"annotation", "translation"}:
-            sample_service = SampleDataService(self.db)
-            await sample_service.update_sample_with_contribution(
-                sample_id=sample_id,
-                sample_type=contribution_type,
-                new_words=word_dict
-            )
+
+        sample_service = SampleDataService(self.db)
+        await sample_service.update_sample_with_contribution(
+            sample_id=sample_id,
+            sample_type=contribution_type,
+        )
 
         return contribution
 
@@ -167,7 +164,8 @@ class ContributionManagementService:
 
         stmt = select(model_class).where(model_class.id == contribution_id)
         result = await self.db.execute(stmt)
-        contribution: Union[AnnotationContribution, TranscriptionContribution, TranslationContribution] = result.scalars().first()
+        contribution: Union[
+            AnnotationContribution, TranscriptionContribution, TranslationContribution] = result.scalars().first()
 
         if not contribution:
             raise ValueError(f"{contribution_type.capitalize()} contribution with ID {contribution_id} not found")
@@ -196,9 +194,7 @@ class ContributionManagementService:
                 if filters.flagged is not None:
                     query = query.where(model_class.flagged == filters.flagged)
                 if filters.passed is not None:
-                    query = query.where(model_class.passed == filters.passed)
-                if filters.min_upvotes is not None:
-                    query = query.where(model_class.upvotes >= filters.min_upvotes)
+                    query = query.where(model_class.accepted == filters.accepted)
                 if filters.created_after:
                     query = query.where(model_class.created_at >= filters.created_after)
                 if filters.created_before:
@@ -265,7 +261,7 @@ class ContributionManagementService:
     ) -> None:
         """Mark a contribution as passed validation"""
         contribution = await self.get_contribution(contribution_id, contribution_type)
-        contribution.passed = True
+        contribution.accepted = True
         await self.db.commit()
 
     async def flag_contribution(
@@ -288,12 +284,18 @@ class ContributionManagementService:
 
     async def upvote_contribution(
             self, contribution_id: uuid.UUID,
-            contribution_type: str
+            contribution_type: str,
+            user_id: uuid.UUID
     ) -> int:
         """Add an upvote to a contribution and return new upvote count"""
         contribution = await self.get_contribution(contribution_id, contribution_type)
-        contribution.upvotes += 1
+        for ancestor in contribution.ancestors:
+            contribution.ancestors[ancestor] += 1
+
+        contribution.ancestors[user_id] = 0
+
         await self.db.commit()
+
         return contribution.upvotes
 
         # =========== Delete Operations ==========
@@ -310,7 +312,7 @@ class ContributionManagementService:
 
         # =========== Stats and Analysis ==========
 
-    async def get_contribution_stats(
+    async def get_user_contribution_stats(
             self,
             user_id: Optional[uuid.UUID] = None,
             contribution_type: Optional[str] = None
@@ -344,7 +346,7 @@ class ContributionManagementService:
 
             # Passed count
             passed_query = select(func.count()).select_from(
-                base_query.where(model_class.passed == True).subquery()
+                base_query.where(model_class.accepted == True).subquery()
             )
             result = await self.db.execute(passed_query)
             passed_count = result.scalar() or 0
@@ -423,7 +425,7 @@ class ContributionManagementService:
             select(getattr(sample_class, "id"))
             .where(sample_class.id.not_in(select(user_contributed_subquery.c.sample_id)))
             .where(sample_class.active == False)
-            .where(sample_class.store < width)
+            .where(sample_class.seed_count < width)
             .where(sample_class.language_id == language_id)
         )
 
@@ -437,36 +439,20 @@ class ContributionManagementService:
         selected_samples = [choice(samples) for _ in range(min(limit, len(samples)))]
         return selected_samples
 
-    async def validate_contribution(
-            self,
-            contribution_id: uuid.UUID,
-            contribution_type: str
-    ) -> bool:
-        """
-        Validate a contribution (integration point with Evaluation Service)
-        This is a placeholder for integration with your evaluation service
-        """
-        # In a real implementation, this would call your evaluation service
-        # For now, we'll just mark it as passed
-        contribution = await self.get_contribution(contribution_id, contribution_type)
-        contribution.passed = True
-        await self.db.commit()
-        return True
-
-    async def award_points_for_contribution(
-            self,
-            contribution_id: uuid.UUID,
-            contribution_type: str,
-            points: int = 10
-    ) -> None:
-        """
-        Award points to a user for their contribution (integration with Reward System)
-        This is a placeholder for integration with your reward system
-        """
-        # In a real implementation, this would call your reward service
-        # For now, we'll just log a message
-        contribution = await self.get_contribution(contribution_id, contribution_type)
-        print(f"Awarded {points} points to user {contribution.user_id} for {contribution_type} contribution")
+    # async def award_points_for_contribution(
+    #         self,
+    #         contribution_id: uuid.UUID,
+    #         contribution_type: str,
+    #         points: int = 10
+    # ) -> None:
+    #     """
+    #     Award points to a user for their contribution (integration with Reward System)
+    #     This is a placeholder for integration with your reward system
+    #     """
+    #     # In a real implementation, this would call your reward service
+    #     # For now, we'll just log a message
+    #     contribution = await self.get_contribution(contribution_id, contribution_type)
+    #     print(f"Awarded {points} points to user {contribution.user_id} for {contribution_type} contribution")
 
     # =========== Custom Contribution Creation ==========
 
@@ -501,6 +487,9 @@ class ContributionManagementService:
             # Prepare payload
             contribution_payload = ContributionCreate(
                 target_url=contribution_data['target_url'],  # or whichever audio to start with
+                sample_text=contribution_data['transcription_text'],
+                sample_id=contribution_data['sample_id'],
+                user_id=user_id,
                 language_id=language_id,
                 speech_length=contribution_data.get("speech_length", 0.0)
             )
@@ -529,7 +518,9 @@ class ContributionManagementService:
 
             contribution_payload = ContributionCreate(
                 target_text=contribution_data['translated_text'],
-                language_id=language_id
+                language_id=language_id,
+                user_id=user_id,
+                sample_id=sample_id
             )
 
         elif contribution_type == "annotation":

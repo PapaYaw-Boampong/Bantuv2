@@ -1,7 +1,7 @@
 import uuid
 from sqlmodel import SQLModel, Field, Relationship
 from datetime import datetime
-from typing import TYPE_CHECKING, List
+from typing import TYPE_CHECKING, List, Dict
 
 if TYPE_CHECKING:
     from models import User, TranscriptionSample, TranslationSample, AnnotationSample
@@ -20,14 +20,15 @@ class AnnotationContribution(SQLModel, table=True):
     sample_id: uuid.UUID = Field(foreign_key="annotation_sample.id")
 
     target_text: str = Field(default="")
+    img_url: str = Field(default="")
 
     created_at: datetime = Field(default_factory=datetime.utcnow)
+
     flagged: bool = Field(default=False)
-    # active: bool = Field(default=False)
-    passed: bool = Field(default=False)
+
     accepted: bool = Field(default=False)
 
-    upvotes: int = Field(default=0)
+    ancestors: Dict[uuid.UUID, int] = Field(default_factory=dict)
 
     # Relationships with optimized loading
     user: "User" = Relationship(
@@ -36,10 +37,6 @@ class AnnotationContribution(SQLModel, table=True):
     annotation_sample: "AnnotationSample" = Relationship(
         back_populates="annotation_contributions", sa_relationship_kwargs={"lazy": "selectin"}
     )
-    # annotation_evaluation_records: List["AnnotationEvaluationRecord"] = Relationship(
-    #     back_populates="annotation_contribution",
-    #     sa_relationship_kwargs={"cascade": "all, delete-orphan", "lazy": "selectin"}
-    # )
 
 
 # ===================== TRANSCRIPTION CONTRIBUTION TABLE ===============
@@ -55,14 +52,14 @@ class TranscriptionContribution(SQLModel, table=True):
     sample_id: uuid.UUID = Field(foreign_key="transcription_sample.id")
 
     target_url: str = Field(default="")
+    sample_text: str = Field(default="")
 
     created_at: datetime = Field(default_factory=datetime.utcnow)
+
     flagged: bool = Field(default=False)
-    # active: bool = Field(default=False)
-    passed: bool = Field(default=False)
     accepted: bool = Field(default=False)
 
-    upvotes: int = Field(default=0)
+    ancestors: Dict[uuid.UUID, int] = Field(default_factory=dict)
 
     # Relationships with optimized loading
     user: "User" = Relationship(
@@ -71,10 +68,6 @@ class TranscriptionContribution(SQLModel, table=True):
     transcription_sample: "TranscriptionSample" = Relationship(
         back_populates="contributions", sa_relationship_kwargs={"lazy": "selectin"}
     )
-    # transcription_evaluation_records: List["TranscriptionEvaluationRecord"] = Relationship(
-    #     back_populates="transcription_contribution",
-    #     sa_relationship_kwargs={"cascade": "all, delete-orphan", "lazy": "selectin"}
-    # )
 
 
 # ===================== TRANSLATION CONTRIBUTION TABLE =================
@@ -91,13 +84,13 @@ class TranslationContribution(SQLModel, table=True):
     sample_id: uuid.UUID = Field(foreign_key="translation_sample.id")
 
     target_text: str = Field(default="")
+    sample_text: str = Field(default="")
 
     created_at: datetime = Field(default_factory=datetime.utcnow)
-    # active: bool = Field(default=False)
 
-    upvotes: int = Field(default=0)
+    ancestors: Dict[uuid.UUID, int] = Field(default_factory=dict)
 
-    passed: bool = Field(default=False)
+    accepted: bool = Field(default=False)
     flagged: bool = Field(default=False)
 
     # Relationships with optimized loading
@@ -107,8 +100,3 @@ class TranslationContribution(SQLModel, table=True):
     translation_sample: "TranslationSample" = Relationship(
         back_populates="contributions", sa_relationship_kwargs={"lazy": "selectin"}
     )
-    # translation_evaluation_records: List["TranslationEvaluationRecord"] = Relationship(
-    #     back_populates="translation_contribution",
-    #     sa_relationship_kwargs={"cascade": "all, delete-orphan", "lazy": "selectin"}
-    # )
-

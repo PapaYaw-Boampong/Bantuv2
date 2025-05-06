@@ -8,6 +8,9 @@ class ContributionCreate(BaseModel):
     target_text: Optional[str] = None
     target_url: Optional[str] = None
     speech_length: Optional[float] = None
+    sample_text: Optional[str] = None
+    sample_id: UUID4
+    img_url: Optional[str] = None
 
     @field_validator('target_text', 'target_url', mode='before')
     def validate_target(cls, v, info: ValidationInfo) -> Optional[str]:
@@ -39,7 +42,7 @@ class ContributionUpdate(BaseModel):
     target_url: Optional[str] = None
     active: Optional[bool] = None
     flagged: Optional[bool] = None
-    passed: Optional[bool] = None
+    accepted: Optional[bool] = None
 
 
 class ContributionFilter(BaseModel):
@@ -49,8 +52,7 @@ class ContributionFilter(BaseModel):
     evaluation_instance_id: Optional[UUID4] = None
     active: Optional[bool] = None
     flagged: Optional[bool] = None
-    passed: Optional[bool] = None
-    min_upvotes: Optional[int] = None
+    accepted: Optional[bool] = None
     created_after: Optional[datetime] = None
     created_before: Optional[datetime] = None
 
