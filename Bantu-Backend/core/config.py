@@ -55,12 +55,7 @@ class Settings(BaseModel):
     FIRST_SUPERUSER_PASSWORD: Optional[str] = os.getenv("FIRST_SUPERUSER_PASSWORD", "admin")
 
     # Database settings
-    POSTGRES_USER: str = os.getenv("DBUSER", "postgres")
-    POSTGRES_PASSWORD: str = os.getenv("DBPASS", "postgres")
-    POSTGRES_HOST: str = os.getenv("DBHOST", "localhost")
-    POSTGRES_PORT: int = int (os.getenv("DBPORT", "5432"))
-    POSTGRES_DB: str = os.getenv("DBNAME", "bantu_db")
-    # SQLALCHEMY_DATABASE_URI: Optional[str] = None
+    SQLALCHEMY_DATABASE_URI: str = os.getenv("SQLALCHEMY_DATABASE_URI", "postgresql+asyncpg://postgres:postgres@localhost:5432/bantu_db")
 
     # Rate limiting
     RATE_LIMIT_PER_MINUTE: int = int(os.getenv("RATE_LIMIT_PER_MINUTE", "60"))
@@ -71,23 +66,6 @@ class Settings(BaseModel):
 
     # Logging
     LOG_LEVEL: str = os.getenv("LOG_LEVEL", "INFO")
-
-    # Computed SQLAlchemy Database URI
-    @computed_field
-    @property
-    def SQLALCHEMY_DATABASE_URI(self) -> str:
-        print("Computing SQLALCHEMY_DATABASE_URI...")  # Debugging statement
-        encoded_password = urllib.parse.quote_plus(self.POSTGRES_PASSWORD)
-        return str(
-            PostgresDsn.build(
-                scheme="postgresql+asyncpg",
-                username=self.POSTGRES_USER,
-                password=encoded_password,
-                host=self.POSTGRES_HOST,
-                port=self.POSTGRES_PORT,
-                path=f"{self.POSTGRES_DB or ''}",
-            )
-        )
 
     @field_validator("BACKEND_CORS_ORIGINS", mode="before")
     def assemble_cors_origins(cls, v: Union[str, List[str]]) -> List[str]:

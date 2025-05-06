@@ -7,7 +7,15 @@ from core.config import settings
 DATABASE_URL = settings.SQLALCHEMY_DATABASE_URI
 
 # Create async database engine with connection pooling
-engine = create_async_engine(DATABASE_URL, echo=True, pool_size=10, max_overflow=20)
+engine = create_async_engine(
+    DATABASE_URL,
+    echo=True,
+    pool_size=10,
+    max_overflow=20,
+    connect_args={
+        "server_settings": {"search_path": "public"}
+    }
+)
 
 # Async session factory
 async_session_maker = async_sessionmaker(
@@ -29,6 +37,7 @@ async def create_db_and_tables():
     """Create database tables asynchronously from SQLModel metadata."""
     try:
         async with engine.begin() as conn:
+            # Create all tables and enums in the public schema
             await conn.run_sync(SQLModel.metadata.create_all)
         print("✅ Database tables created successfully!")
     except Exception as e:

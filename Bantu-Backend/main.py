@@ -1,8 +1,14 @@
 from fastapi import FastAPI
 from api.v1.api_router import router
 from fastapi.middleware.cors import CORSMiddleware
+from database import create_db_and_tables
 
 app = FastAPI(title="Bantu API", version="1.0", description="API for User & Auth Testing")
+
+# Create database tables at startup
+@app.on_event("startup")
+async def startup_event():
+    await create_db_and_tables()
 
 # Allow frontend communication (adjust `origins` for your frontend)
 origins = ["http://localhost:5173"]
