@@ -3,6 +3,7 @@ from sqlmodel import select
 from sqlalchemy.orm import joinedload
 from models.language import Language
 from models.user import UserLanguage, UserLanguageStats
+from schemas.language import UserLanguageStatsUpdate
 from sqlalchemy.ext.asyncio import AsyncSession
 from datetime import datetime
 from uuid import UUID
@@ -289,29 +290,19 @@ class UserLanguageStatsCrud:
     async def update_stats(
             self,
             user_language_stats: UserLanguageStats,
-            is_contribution: bool = False,
-            is_evaluation: bool = False,
-            accepted: bool = False
+
+            stats_data: UserLanguageStatsUpdate = None,
     ) -> UserLanguageStats:
-        if is_contribution:
+        if stats_data.is_contribution:
             user_language_stats.contribution_count += 1
-            if accepted:
-                user_language_stats.accepted_contributions += 1
-            # Update scores
-            if user_language_stats.contribution_count:
-                user_language_stats.contribution_acceptance_score = (
-                        user_language_stats.accepted_contributions / user_language_stats.contribution_count
-                )
-
-        if is_evaluation:
+        if stats_data.is_evaluation:
             user_language_stats.evaluation_count += 1
-            if accepted:
-                user_language_stats.accepted_evaluations += 1
 
-            if user_language_stats.evaluation_count:
-                user_language_stats.evaluation_acceptance_score = (
-                        user_language_stats.accepted_evaluations / user_language_stats.evaluation_count
-                )
+        user_language_stats.total_hours_speech += stats_data.hours
+        user_language_stats.total_sentences_translated += stats_data.sentences
+        user_language_stats.total_tokens_produced += stats_data.tokens
+
+        user_language_stats.updated_at = datetime.utcnow()
 
         await self.db.commit()
         await self.db.refresh(user_language_stats)
@@ -322,7 +313,7 @@ class UserLanguageStatsCrud:
             language_id: UUID,
             user_id: UUID,
             task_type: str,
-            stats_data: dict
+            stats_data: UserLanguageStatsUpdate
     ) -> Optional[UserLanguageStats]:
 
         user_language_stats = await self.get_by_user_and_language_task_type(user_id, language_id, task_type)
@@ -337,16 +328,53 @@ class UserLanguageStatsCrud:
                 "proficiency": PROFICIENCY_LEVELS.get(user_language.proficiency, 3.0),
             })
 
-        is_contribution = stats_data.get("is_contribution", False)
-        is_evaluation = stats_data.get("is_evaluation", False)
-        accepted = stats_data.get("accepted", False)
-
         return await self.update_stats(
             user_language_stats,
-            is_contribution=is_contribution,
-            is_evaluation=is_evaluation,
-            accepted=accepted,
+            stats_data=stats_data
         )
+
+    async def update_user_language_scores(
+            self,
+            user_id: UUID,
+            language_id: UUID,
+            task_type: str,
+            is_contribution: bool = False,
+            is_evaluation: bool = False,
+            acceptance_score: float = None,
+    ) -> Optional[UserLanguageStats]:
+        """
+        Update only the scores for a user's language stats
+        """
+        user_language_stats = await self.get_by_user_and_language_task_type(user_id, language_id, task_type)
+
+        if not user_language_stats:
+            user_language = await UserLanguageCrud(self.db).get_by_user_and_language(user_id, language_id)
+            if not user_language:
+                raise ValueError("UserLanguage not found")
+
+            user_language_stats = await self.create({
+                "user_language_id": user_language.id,
+                "task_type": task_type,
+                "proficiency": PROFICIENCY_LEVELS.get(user_language.proficiency, 3.0),
+            })
+
+        # Update scores based on role
+        if is_contribution and acceptance_score is not None:
+            user_language_stats.accepted_contributions += 1
+            user_language_stats.contribution_acceptance_score = ((user_language_stats.contribution_acceptance_score * user_language_stats.contribution_score_counter) + acceptance_score)/(user_language_stats.contribution_score_counter + 1)
+
+        if is_evaluation and acceptance_score is not None:
+            user_language_stats.accepted_evaluations += 1
+            user_language_stats.evaluation_acceptance_score = ((user_language_stats.evaluation_acceptance_score * user_language_stats.eval_score_counter) + acceptance_score)/(user_language_stats.eval_score_counter + 1)
+
+        # Common updates for both roles
+        user_language_stats.updated_at = datetime.utcnow()
+
+        await self.db.commit()
+        await self.db.refresh(user_language_stats)
+        return user_language_stats
+
+
 
 
 

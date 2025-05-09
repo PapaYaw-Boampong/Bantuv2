@@ -9,23 +9,7 @@ class ContributionCreate(BaseModel):
     target_url: Optional[str] = None
     speech_length: Optional[float] = None
     sample_text: Optional[str] = None
-    sample_id: UUID4
     img_url: Optional[str] = None
-
-    @field_validator('target_text', 'target_url', mode='before')
-    def validate_target(cls, v, info: ValidationInfo) -> Optional[str]:
-        values = info.data
-        if not v and not values.get('target_text') and not values.get('target_url'):
-            raise ValueError("Either target_text or target_url must be provided")
-        return v
-
-
-class CustomContributionCreate(BaseModel):
-    """Base schema for creating contributions"""
-    target_text: Optional[str] = None
-    target_url: Optional[str] = None
-    speech_length: Optional[float] = None
-    language_id: UUID4
 
     @field_validator('target_text', 'target_url', mode='before')
     def validate_target(cls, v, info: ValidationInfo) -> Optional[str]:

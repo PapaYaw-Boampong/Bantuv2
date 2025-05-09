@@ -78,12 +78,20 @@ class EvaluationStep(SQLModel, table=True):
     id: uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True)
     branch_id: uuid.UUID = Field(foreign_key="evaluation_branch.id")
     user_id: uuid.UUID = Field(foreign_key="user.id")
-    contribution_id: uuid.UUID
+    b_contribution_id: uuid.UUID # Best contribution so far
     head: bool = Field(default=False)
     assigned_at: Optional[datetime] = Field(default_factory=None)
     step_number: int = Field(default=1)
     is_complete: bool = Field(default=False)
-    is_approved: bool = Field(default=False)
+
+    abtest_decision: Optional[str] = Field(default=None)
+    evaluation_decision: Optional[bool] = Field(default=None)
+
+    run_ab_test: bool = Field(default=False)  # Flag to indicate if AB test should be run
+
+    a_contribution_id: Optional[uuid.UUID] = Field(default=None)  # Alternative contribution from previous step
+
+    next_alt_contribution_id: Optional[uuid.UUID] = Field(default=None)
 
     evaluation_branch: "EvaluationBranch" = Relationship(back_populates="evaluation_steps")
     user: Optional["User"] = Relationship(back_populates="evaluation_steps")
@@ -99,11 +107,10 @@ class ABTest(SQLModel, table=True):
     final_winner_ids: List[str] = Field(
         sa_column=Column(JSON), default_factory=list
     )
+
     target_winner_count: int = Field(default=1)  # default = 1, can be >1 for transcription etc.
-    stage_count: int = Field(default=0)
+    test_depth: int = Field(default=0)
     current_stage: int = Field(default=0)  # Track the current active stage
-    min_votes_threshold: int = Field(default=3)  # Minimum votes needed for statistical significance
-    confidence_level: float = Field(default=0.95)  # Confidence level for statistical significance
 
     created_at: datetime = Field(default_factory=datetime.utcnow)
     completed_at: Optional[datetime] = None
@@ -123,16 +130,19 @@ class ABTestPair(SQLModel, table=True):
     __tablename__ = "ab_test_pair"
 
     id: uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True)
+
     ab_test_id: uuid.UUID = Field(foreign_key="ab_test.id")
     stage_number: int  # Stage in the tournament
+
     contribution_a_id: uuid.UUID
     contribution_b_id: uuid.UUID
     is_complete: bool = Field(default=False)
     is_tie: bool = Field(default=False)  # Flag for tracking ties
-    winner_id: Optional[uuid.UUID] = Field(default=None)  # Store the winner directly
-    vote_count_a: int = Field(default=0)  # Count of votes for contribution A
-    vote_count_b: int = Field(default=0)  # Count of votes for contribution B
-    min_votes_required: int = Field(default=3)  # Minimum votes needed for this pair
+
+    winner_ids: Optional[List[uuid.UUID]] = Field(
+        sa_column=Column(JSON),
+        default_factory=list
+    )  # Store the winner directly
 
     created_at: datetime = Field(default_factory=datetime.utcnow)
     updated_at: datetime = Field(default_factory=datetime.utcnow)
@@ -148,16 +158,12 @@ class ABTestVote(SQLModel, table=True):
     id: uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True)
     pair_id: uuid.UUID = Field(foreign_key="ab_test_pair.id")
     user_id: uuid.UUID
-    selected_contribution_id: uuid.UUID
+    selected_contribution_ids: List[uuid.UUID] = Field(sa_column=Column(JSON))  #Store selected contribution IDs
     vote_assigned_at: datetime = Field(default_factory=datetime.utcnow)
     vote_submitted_at: Optional[datetime] = None
 
     # For randomization tracking
     a_shown_first: bool = Field(default=True)  # Track which option was shown first
-
-    # Weighted score based on user proficiency
-    user_proficiency: Optional[int] = None  # Store user proficiency level at time of vote
-    weighted_score: Optional[float] = None  # Calculated weighted score
 
     created_at: datetime = Field(default_factory=datetime.utcnow)
     updated_at: datetime = Field(default_factory=datetime.utcnow)

@@ -145,6 +145,11 @@ class UserLanguageStats(SQLModel, table=True):
 
     proficiency: float = Field(default=3.0)
 
+    # Statistics
+    total_hours_speech: int = Field(default=0)
+    total_sentences_translated: int = Field(default=0)
+    total_tokens_produced: int = Field(default=0)
+
     # Reputation Metrics
     contribution_count: int = Field(default=0)
     accepted_contributions: int = Field(default=0)
@@ -153,6 +158,10 @@ class UserLanguageStats(SQLModel, table=True):
     evaluation_count: int = Field(default=0)
     accepted_evaluations: int = Field(default=0)
     evaluation_acceptance_score: float = Field(default=0.0)
+
+    # Score Counters
+    eval_score_counter: int = Field(default=0)
+    contribution_score_counter: int = Field(default=0)
 
     # Timestamps
     created_at: datetime = Field(default_factory=datetime.utcnow)

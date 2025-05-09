@@ -60,9 +60,17 @@ class UserLanguageStatsCreate(BaseModel):
 
 
 class UserLanguageUpdate(BaseModel):
-    total_hours_speech: Optional[float] = None
-    total_sentences_translated: Optional[int] = None
+    total_hours_speech: Optional[float] = 0
+    total_sentences_translated: Optional[int] = 0
     total_annotation_tokens: Optional[int] = 0
+
+
+class UserLanguageStatsUpdate(BaseModel):
+    total_hours_speech: Optional[float] = 0
+    total_sentences_translated: Optional[int] = 0
+    total_annotation_tokens: Optional[int] = 0
+    is_contribution: Optional[bool] = False
+    is_evaluation: Optional[bool] = False
 
 
 # class UserLanguageRead(UserLanguageBase):

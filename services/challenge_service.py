@@ -399,33 +399,24 @@ class ChallengeService:
             tokens: int = 0,
             is_contribution: bool = False,
             is_evaluation: bool = False,
-            accepted: bool = False,
-            points: int = 0
+            is_ab_test: bool = False,
+
+            points: int = 1
     ) -> ChallengeParticipation:
         participation.total_points += points
         if is_contribution:
             participation.contribution_count += 1
-            if accepted:
-                participation.accepted_contributions += 1
 
         if is_evaluation:
-            participation.total_hours_speech += hours
-            participation.total_sentences_translated += sentences
-            participation.total_tokens_produced += tokens
-
             participation.evaluation_count += 1
-            if accepted:
-                participation.accepted_evaluations += 1
 
-        # Update scores
-        if participation.contribution_count:
-            participation.contribution_acceptance_score = (
-                    participation.accepted_contributions / participation.contribution_count
-            )
-        if participation.evaluation_count:
-            participation.evaluation_acceptance_score = (
-                    participation.accepted_evaluations / participation.evaluation_count
-            )
+        if is_ab_test:
+            participation.evaluation_count += 1
+            participation.total_points += points
+
+        participation.total_hours_speech += hours
+        participation.total_sentences_translated += sentences
+        participation.total_tokens_produced += tokens
 
         participation.updated_at = datetime.utcnow()
 
@@ -437,7 +428,8 @@ class ChallengeService:
             self,
             event_id: UUID,
             user_id: UUID,
-            stats_data: ParticipationUpdate
+            stats_data: ParticipationUpdate,
+
     ) -> Optional[ChallengeParticipation]:
         participation = await self.get_challenge_participation(event_id, user_id)
         if not participation:
@@ -450,8 +442,7 @@ class ChallengeService:
             tokens=stats_data.total_tokens_produced,
             is_contribution=stats_data.is_contribution,
             is_evaluation=stats_data.is_evaluation,
-            points=stats_data.total_points,
-            accepted=stats_data.accepted
+            is_ab_test=stats_data.is_ab_test,
         )
 
     async def get_challenge_participants(self, event_id: UUID, skip: int = 0, limit: int = 100
@@ -610,6 +601,47 @@ class ChallengeService:
             created_at=participation.created_at,
             updated_at=participation.updated_at,
         )
+
+    async def update_challenge_participation_scores(
+            self,
+            event_id: UUID,
+            user_id: UUID,
+            is_contribution: bool = False,
+            is_evaluation: bool = False,
+            acceptance_score: float = None,
+            points: int = 0
+    ) -> Optional["ChallengeParticipation"]:
+        """
+        Update only the scores for a user's challenge participation
+        """
+
+        participation = await self.get_challenge_participation(event_id, user_id)
+
+        if not participation:
+            raise ValueError(f"Challenge participation not found for user {user_id} in event {event_id}")
+
+        # Add points
+        if points > 0:
+            participation.total_points += points
+
+        # Update scores based on role
+        if is_contribution and acceptance_score is not None:
+            participation.accepted_contributions += 1
+            participation.contribtionscore_counter += 1
+            participation.contribution_acceptance_score = ((participation.contribution_score_counter * participation.contribution_score_counter) + acceptance_score)/(participation.contribution_score_counter + 1)
+
+        if is_evaluation and acceptance_score is not None:
+            participation.accepted_evaluations += 1
+            participation.eval_score_counter += 1
+            participation.evaluation_acceptance_score = ((participation.eval_score_counter * participation.eval_score_counter) + acceptance_score)/(participation.eval_score_counter + 1)
+
+        # Update timestamp
+        participation.updated_at = datetime.utcnow()
+
+        await self.db.commit()
+        await self.db.refresh(participation)
+
+        return participation
 
     async def get_challenge_aggregates(self, challenge_id: UUID) -> ChallengeStatsOut:
         stmt = (

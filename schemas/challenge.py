@@ -84,12 +84,13 @@ class ParticipationUpdate(BaseModel):
     total_hours_speech: Optional[int] = 0
     total_sentences_translated: Optional[int] = 0
     total_tokens_produced: Optional[int] = 0
-    total_points: Optional[int] = 0
 
     is_evaluation: Optional[bool] = False
     is_contribution: Optional[bool] = False
+    is_ab_test: Optional[bool] = False
 
     accepted: Optional[bool] = False
+    points: Optional[int] = 0
 
 
 # class UserStatsUpdate(BaseModel):

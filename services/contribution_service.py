@@ -22,7 +22,6 @@ from schemas.contribution import (
     ContributionUpdate,
     ContributionFilter,
     ContributionStats,
-    CustomContributionCreate
 )
 
 from schemas.sample_data import (
@@ -96,7 +95,7 @@ class ContributionManagementService:
         challenge_service = ChallengeService(self.db)
 
         stats_data = ParticipationUpdate(
-            is_contribution=True,
+            is_contribution=True
         )
 
         if data.target_text == "" and data.target_url == "":
@@ -134,11 +133,19 @@ class ContributionManagementService:
                 user_id=user_id,
                 stats_data=stats_data
             )
+
         # global stats
         await language_service.user_language_repository.update_language_stats(
             user_id=user_id,
             language_id=language_id,
             stats_data=stats_data
+        )
+
+        await self.update_ancestors(
+            contribution_type=contribution_type,
+            contribution_id=contribution.id,
+            user_id=user_id,
+            challenge_id=challenge_id
         )
 
         from services.sample_data_service import SampleDataService
@@ -171,6 +178,17 @@ class ContributionManagementService:
             raise ValueError(f"{contribution_type.capitalize()} contribution with ID {contribution_id} not found")
 
         return contribution
+
+    async def get_contribution_ancestors(
+            self,
+            contribution_id: uuid.UUID,
+            contribution_type: str
+    ) -> Dict[uuid.UUID, int]:
+        contribution = await self.get_contribution(contribution_id, contribution_type)
+        ancestors = contribution.ancestors
+        if not ancestors:
+            return {}
+        return ancestors
 
     async def list_contributions(
             self,
@@ -209,30 +227,30 @@ class ContributionManagementService:
         result = await self.db.execute(query)
         return result.scalars().all()
 
-    async def get_user_contributions(
-            self,
-            user_id: uuid.UUID,
-            contribution_type: Optional[str] = None,
-            active_only: bool = True
-    ) -> Dict[str, List]:
-        """Get all contributions by a specific user, optionally filtered by type"""
-        result = {}
-
-        types_to_fetch = [contribution_type] if contribution_type else self.contribution_types.keys()
-
-        for ctype in types_to_fetch:
-            model_class = await self._get_model_class(ctype)
-            query = select(model_class).where(model_class.user_id == user_id)
-
-            if active_only:
-                query = query.where(model_class.active == True)
-
-            db_result = await self.db.execute(query)
-            contributions = db_result.scalars().all()
-
-            result[ctype] = contributions
-
-        return result if contribution_type is None else result[contribution_type]
+    # async def get_user_contributions(
+    #         self,
+    #         user_id: uuid.UUID,
+    #         contribution_type: Optional[str] = None,
+    #         active_only: bool = True
+    # ) -> Dict[str, list]:
+    #     """Get all contributions by a specific user, optionally filtered by type"""
+    #     result = {}
+    #
+    #     types_to_fetch = [contribution_type] if contribution_type else self.contribution_types.keys()
+    #
+    #     for ctype in types_to_fetch:
+    #         model_class = await self._get_model_class(ctype)
+    #         query = select(model_class).where(model_class.user_id == user_id)
+    #
+    #         if active_only:
+    #             query = query.where(model_class.active == True)
+    #
+    #         db_result = await self.db.execute(query)
+    #         contributions = db_result.scalars().all()
+    #
+    #         result[ctype] = contributions
+    #
+    #     return result if contribution_type is None else result[contribution_type]
 
         # =========== Update Operations ==========
 
@@ -282,23 +300,7 @@ class ContributionManagementService:
         contribution.active = active
         await self.db.commit()
 
-    async def upvote_contribution(
-            self, contribution_id: uuid.UUID,
-            contribution_type: str,
-            user_id: uuid.UUID
-    ) -> int:
-        """Add an upvote to a contribution and return new upvote count"""
-        contribution = await self.get_contribution(contribution_id, contribution_type)
-        for ancestor in contribution.ancestors:
-            contribution.ancestors[ancestor] += 1
-
-        contribution.ancestors[user_id] = 0
-
-        await self.db.commit()
-
-        return contribution.upvotes
-
-        # =========== Delete Operations ==========
+    # =========== Delete Operations ==========
 
     async def delete_contribution(
             self, contribution_id: uuid.UUID,
@@ -439,20 +441,28 @@ class ContributionManagementService:
         selected_samples = [choice(samples) for _ in range(min(limit, len(samples)))]
         return selected_samples
 
-    # async def award_points_for_contribution(
-    #         self,
-    #         contribution_id: uuid.UUID,
-    #         contribution_type: str,
-    #         points: int = 10
-    # ) -> None:
-    #     """
-    #     Award points to a user for their contribution (integration with Reward System)
-    #     This is a placeholder for integration with your reward system
-    #     """
-    #     # In a real implementation, this would call your reward service
-    #     # For now, we'll just log a message
-    #     contribution = await self.get_contribution(contribution_id, contribution_type)
-    #     print(f"Awarded {points} points to user {contribution.user_id} for {contribution_type} contribution")
+    async def update_ancestors(
+            self,
+            contribution_id: uuid.UUID,
+            contribution_type: str,
+            user_id: uuid.UUID,
+            challenge_id: Optional[uuid.UUID] = None
+    ) -> Union[AnnotationContribution, TranscriptionContribution, TranslationContribution]:
+        """
+        Award points to a user for their contribution (integration with Reward System)
+        This is a placeholder for integration with your reward system
+        """
+        contribution = await self.get_contribution(contribution_id, contribution_type)
+
+        if challenge_id:
+            in_challenge = True
+        else:
+            in_challenge = False
+
+        contribution.ancestors[user_id] = [0, in_challenge]
+        await self.db.commit()
+
+        return contribution
 
     # =========== Custom Contribution Creation ==========
 
@@ -460,7 +470,7 @@ class ContributionManagementService:
             self,
             user_id: uuid.UUID,
             language_id: uuid.UUID,
-            contribution_data: CustomContributionCreate,
+            contribution_data: ContributionCreate,
             contribution_type: str,
             challenge_id: Optional[uuid.UUID] = None
     ) -> Dict:
@@ -475,11 +485,10 @@ class ContributionManagementService:
 
         if contribution_type == "transcription":
             transcription_sample = TranscriptionSampleCreate(
-                language_id=language_id,
                 transcription_text=contribution_data['transcription_text'],
                 category=contribution_data.get('category', None),
-                active=contribution_data.get('active', False),
-                priority=contribution_data.get('priority', 0),
+                language_id=language_id,
+
             )
             sample = await samples_repo.create_transcription_sample(transcription_sample)
             sample_id = sample.id
@@ -488,15 +497,12 @@ class ContributionManagementService:
             contribution_payload = ContributionCreate(
                 target_url=contribution_data['target_url'],  # or whichever audio to start with
                 sample_text=contribution_data['transcription_text'],
-                sample_id=contribution_data['sample_id'],
-                user_id=user_id,
-                language_id=language_id,
                 speech_length=contribution_data.get("speech_length", 0.0)
             )
 
         elif contribution_type == "translation":
             seed = TranslationSeedCreate(
-                original_text=contribution_data['original_text'],
+                original_text=contribution_data['sample_text'],
                 category=contribution_data.get('category', None),
                 active=contribution_data.get('active', False),
                 priority=contribution_data.get('priority', 0),
@@ -506,11 +512,8 @@ class ContributionManagementService:
             seed_id = seed_result.id
 
             sample = TranslationSampleCreate(
-                seed_data_id=seed_id,
                 language_id=language_id,
-                translated_text=contribution_data['translated_text'],
-                active=contribution_data.get('active', False),
-                priority=contribution_data.get('priority', 0),
+                seed_id=seed_id,
             )
 
             sample_result = await samples_repo.create_translation_sample(sample)
@@ -518,9 +521,7 @@ class ContributionManagementService:
 
             contribution_payload = ContributionCreate(
                 target_text=contribution_data['translated_text'],
-                language_id=language_id,
-                user_id=user_id,
-                sample_id=sample_id
+                sample_text=contribution_data['sample_text'],
             )
 
         elif contribution_type == "annotation":
@@ -528,15 +529,14 @@ class ContributionManagementService:
                 image_url=contribution_data['image_url'],
                 annotation_text=contribution_data['seed_text'],
                 category=contribution_data.get('category'),
-                active=False
             )
             seed_result = await samples_repo.create_annotation_seed(seed)
             seed_id = seed_result.id
 
             sample = AnnotationSampleCreate(
                 seed_data_id=seed_id,
+                active=False,
                 language_id=language_id,
-                active=False
             )
 
             sample_result = await samples_repo.create_annotation_sample(sample)
@@ -544,8 +544,8 @@ class ContributionManagementService:
             sample_id = sample_result.id
 
             contribution_payload = ContributionCreate(
-                target_text=contribution_data['annotation_text'],
-                language_id=language_id
+                target_text=contribution_data['target_text'],
+                img_url=contribution_data['img_url'],
             )
 
         else:
@@ -568,52 +568,69 @@ class ContributionManagementService:
             "contribution_id": created_contribution.id
         }
 
-    async def record_raw_contribution(self, event_id: str, user_id: str, contribution_type: str, metrics: dict):
+    async def unpackPoints(
+            self,
+            contribution_id: uuid.UUID,
+            contribution_type: str,
+    ) -> bool:
+        contribution = await self.get_contribution(contribution_id, contribution_type)
+
+        ancestors = contribution.ancestors
+
+        if not contribution:
+            raise ValueError(f"Contribution with ID {contribution_id} not found")
+
+        # Define pipe depths based on contribution type
+        pipe_depths = {
+            "annotation": settings.ANNOTATION_PIPE_DEPTH,
+            "transcription": settings.TRANSCRIPTION_PIPE_DEPTH,
+            "translation": settings.TRANSLATION_PIPE_DEPTH
+        }
+        total_pipe_depth = pipe_depths.get(contribution_type, 3)
+
+        # Calculate scores
+        ancestor_count = len(ancestors)
 
         from services.challenge_service import ChallengeService
+        from services.language_service import LanguageService
         challenge_service = ChallengeService(self.db)
-        # Gets or creates participation
-        participation = await challenge_service.get_challenge_participation(event_id, user_id)
+        language_service = LanguageService(self.db)
 
-        participation.contribution_count += 1
+        for i, ancestor_id in enumerate(ancestors):
+            user_id = ancestor_id
+            points_data = ancestors[ancestor_id]
+            points = points_data[0]
+            challenge_id = points_data[1] if points_data[1] != False else None
 
-        # Update based on type
-        if contribution_type == "speech":
-            participation.total_hours_speech += metrics.get("hours", 0)
-        elif contribution_type == "translation":
-            participation.total_sentences_translated += metrics.get("sentences", 0)
-        elif contribution_type == "text":
-            participation.total_tokens_produced += metrics.get("tokens", 0)
+            is_contribution = (i == 0)  # First ancestor is the contributor
+            is_evaluation = (i > 0)  # Other ancestors are evaluators
 
-        participation.updated_at = datetime.utcnow()
-        self.db.add(participation)
-        await self.db.commit()
-        await self.db.refresh(participation)
-        return participation
+            if is_contribution:
+                # Calculate contributor score
+                acceptance_score = (ancestor_count - 1) / total_pipe_depth
+            else:
+                # Calculate evaluator score
+                acceptance_score = points / (total_pipe_depth - 1) if total_pipe_depth > 1 else 1
 
-    async def record_contribution_evaluation(self, event_id: str, user_id: str, accepted: bool,
-                                             points_awarded: int = 0):
+            # Update challenge participation scores if this is part of a challenge
+            if challenge_id:
+                await challenge_service.update_challenge_participation_scores(
+                    event_id=challenge_id,
+                    user_id=user_id,
+                    is_contribution=is_contribution,
+                    is_evaluation=is_evaluation,
+                    acceptance_score=acceptance_score,
+                    points=points
+                )
 
-        from services.challenge_service import ChallengeService
-        challenge_service = ChallengeService(self.db)
-        # Gets or creates participation
-        participation = await challenge_service.get_challenge_participation(event_id, user_id)
+            # Update global language stats scores regardless
+            await language_service.user_language_repository.update_user_language_scores(
+                user_id=user_id,
+                language_id=contribution.language_id,
+                task_type=contribution_type,
+                is_contribution=is_contribution,
+                is_evaluation=is_evaluation,
+                acceptance_score=acceptance_score
+            )
 
-        if not participation:
-            return None
-
-        if accepted:
-            participation.accepted_contributions += 1
-
-        participation.total_points += points_awarded
-
-        # Update scores
-        if participation.contribution_count > 0:
-            participation.acceptance_rate = participation.accepted_contributions / participation.contribution_count
-            participation.contribution_acceptance_score = participation.acceptance_rate
-
-        participation.updated_at = datetime.utcnow()
-        self.db.add(participation)
-        await self.db.commit()
-        await self.db.refresh(participation)
-        return participation
+        return True

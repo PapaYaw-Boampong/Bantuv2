@@ -1,5 +1,6 @@
 import uuid
 from sqlmodel import SQLModel, Field, Relationship
+from sqlalchemy import JSON, Column
 from datetime import datetime
 from typing import TYPE_CHECKING, List, Dict
 
@@ -28,7 +29,12 @@ class AnnotationContribution(SQLModel, table=True):
 
     accepted: bool = Field(default=False)
 
-    ancestors: Dict[uuid.UUID, int] = Field(default_factory=dict)
+    ancestors: Dict[str, list] = Field(
+        sa_column=Column(JSON),
+        default_factory=dict
+    )
+
+    max_eval_depth: int = Field(default=0)
 
     # Relationships with optimized loading
     user: "User" = Relationship(
@@ -59,7 +65,12 @@ class TranscriptionContribution(SQLModel, table=True):
     flagged: bool = Field(default=False)
     accepted: bool = Field(default=False)
 
-    ancestors: Dict[uuid.UUID, int] = Field(default_factory=dict)
+    ancestors: Dict[str, list] = Field(
+        sa_column=Column(JSON),
+        default_factory=dict
+    )
+
+    max_eval_depth: int = Field(default=0)
 
     # Relationships with optimized loading
     user: "User" = Relationship(
@@ -88,7 +99,12 @@ class TranslationContribution(SQLModel, table=True):
 
     created_at: datetime = Field(default_factory=datetime.utcnow)
 
-    ancestors: Dict[uuid.UUID, int] = Field(default_factory=dict)
+    ancestors: Dict[str, list] = Field(
+        sa_column=Column(JSON),
+        default_factory=dict
+    )
+
+    max_eval_depth: int = Field(default=0)
 
     accepted: bool = Field(default=False)
     flagged: bool = Field(default=False)

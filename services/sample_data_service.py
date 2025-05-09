@@ -48,7 +48,7 @@ class SampleDataService:
             priority_threshold: int = 0,
             active: bool = False,
             evaluate: bool = False,
-            ids_only: bool = False
+            ids_only: bool = False,
     ) -> List:
         """Generic sample fetcher with optional ID-only mode and priority-based selection"""
 
@@ -150,29 +150,29 @@ class SampleDataService:
             priority_threshold
         )
 
-    async def get_sample_word_frequencies(
-            self,
-            sample_id: uuid.UUID,
-            sample_type: str,
-    ) -> Dict[str, int]:
-        """Get word frequencies for a specific sample"""
-        sample_model = {
-            "translation": TranslationSample,
-            "annotation": AnnotationSample,
-            "transcription": TranscriptionSample
-        }.get(sample_type)
-
-        stmt = select(sample_model).where(
-            TranslationSample.id == sample_id,
-        )
-
-        result = await self.db.execute(stmt)
-        sample = result.scalar_one_or_none()
-
-        if not sample or not sample.words:
-            return {}
-
-        return sample.words
+    # async def get_sample_word_frequencies(
+    #         self,
+    #         sample_id: uuid.UUID,
+    #         sample_type: str,
+    # ) -> Dict[str, int]:
+    #     """Get word frequencies for a specific sample"""
+    #     sample_model = {
+    #         "translation": TranslationSample,
+    #         "annotation": AnnotationSample,
+    #         "transcription": TranscriptionSample
+    #     }.get(sample_type)
+    #
+    #     stmt = select(sample_model).where(
+    #         TranslationSample.id == sample_id,
+    #     )
+    #
+    #     result = await self.db.execute(stmt)
+    #     sample = result.scalar_one_or_none()
+    #
+    #     if not sample or not sample.words:
+    #         return {}
+    #
+    #     return sample.words
 
     # --- Annotation Samples ---
 
@@ -291,7 +291,6 @@ class SampleDataService:
             self,
             sample_id: uuid.UUID,
             sample_type: str,
-            new_words: Dict[str, int],
     ):
         # Select the appropriate model
         sample_model = {
@@ -311,14 +310,7 @@ class SampleDataService:
         if not sample:
             raise ValueError("Sample not found")
 
-        # Update word frequencies
-        if sample.words is None:
-            sample.words = {}
-
-        for word, freq in new_words.items():
-            sample.words[word] = sample.words.get(word, 0) + freq
-
-        sample.store += 1
+        sample.seed_count += 1
 
         self.db.add(sample)
         await self.db.commit()
@@ -326,46 +318,24 @@ class SampleDataService:
 
         return sample
 
-    async def deactivate_samples(
-            self,
-            sample_ids: List[uuid.UUID],
-            sample_type: str
-    ) -> None:
-        if sample_type == "transcription":
-            stmt = update(TranscriptionSample).where(
-                TranscriptionSample.id.in_(sample_ids)
-            ).values(active=False)
-        elif sample_type == "translation":
-            stmt = update(TranslationSample).where(
-                TranslationSample.id.in_(sample_ids)
-            ).values(active=False)
-        elif sample_type == "annotation":
-            stmt = update(AnnotationSample).where(
-                AnnotationSample.id.in_(sample_ids)
-            ).values(active=False)
-        else:
-            raise ValueError(f"Unsupported sample type: {sample_type}")
-
-        await self.db.execute(stmt)
-        await self.db.commit()
-
     async def lock_samples(
             self,
             sample_ids: List[uuid.UUID],
-            sample_type: str
+            sample_type: str,
+            state: bool
     ) -> None:
         if sample_type == "transcription":
             stmt = update(TranscriptionSample).where(
                 TranscriptionSample.id.in_(sample_ids)
-            ).values(active=True)
+            ).values(active=state)
         elif sample_type == "translation":
             stmt = update(TranslationSample).where(
                 TranslationSample.id.in_(sample_ids)
-            ).values(active=True)
+            ).values(active=state)
         elif sample_type == "annotation":
             stmt = update(AnnotationSample).where(
                 AnnotationSample.id.in_(sample_ids)
-            ).values(active=True)
+            ).values(active=state)
         else:
             raise ValueError(f"Unsupported sample type: {sample_type}")
 

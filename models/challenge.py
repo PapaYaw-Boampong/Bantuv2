@@ -136,6 +136,10 @@ class ChallengeParticipation(SQLModel, table=True):
     created_at: datetime = Field(default_factory=datetime.utcnow)
     updated_at: datetime = Field(default_factory=datetime.utcnow)
 
+    # Score Counters
+    eval_score_counter: int = Field(default=0)
+    contribution_score_counter: int = Field(default=0)
+
     # Relationships
     user: "User" = Relationship(
         back_populates="events",
@@ -143,7 +147,7 @@ class ChallengeParticipation(SQLModel, table=True):
     )
     challenge: "Challenge" = Relationship(
         back_populates="participants",
-        sa_relationship_kwargs={"lazy": "selectin"}
+        sa_relationship_kwargs={"lazy": "selectin", "cascade": "all, delete"}
     )
 
 

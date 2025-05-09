@@ -146,7 +146,7 @@ class TokenService:
         should_rotate = False
         seven_days_ago = datetime.utcnow() - timedelta(days=7)
 
-        if db_token.issued_at < seven_days_ago or db_token.rotations_count >= 5:
+        if db_token.issued_at < seven_days_ago or db_token.rotations_count >= 50:
             should_rotate = True
 
         if should_rotate:

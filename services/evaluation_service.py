@@ -1,3 +1,4 @@
+import math
 import uuid
 from typing import Dict, List, Optional, Union, Tuple, Any
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -63,7 +64,6 @@ class EvaluationService:
             sample_id: uuid.UUID,
             contribution_type: str,
             num_branches: int = 3,
-            max_depth: int = 5,
     ) -> EvaluationInstance:
         """
         Initialize an evaluation instance for a given sample.
@@ -72,11 +72,19 @@ class EvaluationService:
             sample_id: The ID of the sample to evaluate
             contribution_type: "annotation", "transcription", or "translation"
             num_branches: Number of parallel evaluation branches
-            max_depth: Maximum depth for each branch
 
         Returns:
             The created EvaluationInstance
         """
+
+        # Define pipe depths based on contribution type
+        pipe_depths = {
+            "annotation": settings.ANNOTATION_PIPE_DEPTH,
+            "transcription": settings.TRANSCRIPTION_PIPE_DEPTH,
+            "translation": settings.TRANSLATION_PIPE_DEPTH
+        }
+        max_depth = pipe_depths.get(contribution_type, 3)
+
         # Validate the contribution type
         if contribution_type not in self.task_type:
             raise ValueError(f"Invalid contribution type: {contribution_type}")
@@ -166,28 +174,17 @@ class EvaluationService:
             language_id: uuid.UUID,
             user_id: uuid.UUID,
             contribution_type: str,
-            rating: Optional[int] = None,
-            decision: Optional[bool] = None,
-            correction_id: Optional[uuid.UUID] = None
+            eval_decision: Optional[bool] = None,
+            correction_id: Optional[uuid.UUID] = None,
+            run_abtest: bool = False,
     ) -> bool:
         """
         Submit and progress an evaluation step in a branch.
-
-        Args:
-            branch_id: ID of the evaluation branch
-            instance_id: ID of the evaluation instance
-            contribution_type: Type of contribution ("annotation", "transcription", "translation")
-            rating: Optional rating given by evaluator
-            decision: Whether the current contribution was upvoted
-            correction_id: New contribution to use if current was rejected
-            language_id: ID of the language for the evaluation
-            user_id: ID of the user submitting the evaluation
-
         Returns:
             True if submission was successful
 
         """
-        if decision is None:
+        if eval_decision is None:
             # Treat as a skipped evaluation — no stat increment or contribution change
             pass
 
@@ -196,19 +193,30 @@ class EvaluationService:
 
         # 2. Handle contribution resolution
         from services.contribution_service import ContributionManagementService
-        contribution_management_service = ContributionManagementService(self.db)
+        cms = ContributionManagementService(self.db)
 
-        if decision is False:
+        # 3. Get the result of the possible abtest
+        eval_step = await self.get_evaluation_step(branch_id)
+        if eval_step.abtest_decision == "a":
+            await cms.unpackPoints(eval_step.b_contribution_id, contribution_type)
+            advancing_contribution = eval_step.a_contribution_id
+        elif eval_step.abtest_decision == "b":
+            await cms.unpackPoints(eval_step.a_contribution_id, contribution_type)
+            advancing_contribution = eval_step.b_contribution_id
+        else:
+            raise ValueError("Invalid A/B test decision in evaluation Service")
+
+        # 4. check if the advancing contribution is accepted or correction is made - if so then run abtest in next step
+        if eval_decision is False:
             # Use correction (assumes it’s already created & valid)
             if not correction_id:
                 raise ValueError(
                     "Correction ID must be provided if contribution is not upvoted")  # will possibly remove for skipped
-            branch.current_contribution_id = correction_id
-        elif decision is True:
-            await contribution_management_service.upvote_contribution(
-                contribution_id=branch.current_contribution_id,
-                contribution_type=contribution_type,
-            )
+
+            # Init abtest
+            run_abtest = True
+        else:
+            await cms.update_ancestors(advancing_contribution, contribution_type, user_id)
 
         # 3. Mark current head step as complete and not head
         await self.db.execute(
@@ -219,22 +227,44 @@ class EvaluationService:
                     EvaluationStep.head == True
                 )
             )
-            .values(head=False, is_complete=True)
+            .values(
+                head=False,
+                is_complete=True,
+                evaluation_decision=eval_decision,
+                abtest_decision=eval_step.abtest_decision,
+                next_alt_contribution_id=correction_id
+            )
         )
+
         # Prepare next step or finish instance
         if branch.is_complete:
-            # 4. Check if instance is complete
+
+            # 4. Upack points for the advancing contribution and possibly last correction
+
+            if correction_id:
+                await cms.unpackPoints(correction_id, contribution_type)
+
+            await cms.unpackPoints(advancing_contribution, contribution_type)
+
+            # 5. Check if instance is complete
+
             await self._check_instance_completion(instance_id)
+
         else:
-            # 5. Increment branch depth and create next evaluation step
+
+            # 6. Increment branch depth and create next evaluation step
+
             branch.depth += 1
             next_step = EvaluationStep(
                 branch_id=branch.id,
                 instance_id=instance_id,
-                contribution_id=branch.current_contribution_id,
+                b_contribution_id=advancing_contribution,
+                a_contribution_id=correction_id,
                 head=True,
-                complete=False,
-                step_number=branch.depth + 1
+                is_complete=False,
+                step_number=branch.depth + 1,
+                run_abtest=run_abtest,
+
             )
             self.db.add(next_step)
 
@@ -244,8 +274,7 @@ class EvaluationService:
         from services.challenge_service import ChallengeService
 
         eval_stats = ParticipationUpdate(
-            is_evaluation=True,
-            points=settings.EVALUATION_POINTS,
+            is_evaluation=True
         )
 
         # Update challenge participation stats
@@ -254,12 +283,12 @@ class EvaluationService:
             await challenge_service.update_participation_stats(
                 event_id=branch.event_id,
                 user_id=user_id,
-                stats_data=eval_stats
+                stats_data=eval_stats,
             )
         await language_service.user_language_repository.update_language_stats(
             user_id=user_id,
             language_id=language_id,
-            stats_data=eval_stats
+            stats_data=eval_stats,
         )
 
         # Commit everything
@@ -350,37 +379,6 @@ class EvaluationService:
         return branch
 
     # =========== Evaluations ==========
-    async def finalize_evaluation_instance(
-            self, instance_id: uuid.UUID,
-            contribution_type: str
-    ) -> bool:
-        """
-        Forcefully finalize an evaluation instance.
-
-        Returns:
-            True if successful, False otherwise
-        """
-        instance = await self.get_evaluation_instance(instance_id)
-
-        if instance.is_complete:
-            return True
-
-        # Mark all branches as complete
-        for branch in instance.branches:
-            branch.complete = True
-
-        instance.is_complete = True
-        await self.db.commit()
-
-        # If A/B test is required, initialize it
-        if instance.ab_test:
-            await self.init_ab_test(
-                instance.id,
-                contribution_type=contribution_type
-            )
-
-        return True
-
     async def assign_evaluation_step_to_user(
             self,
             user_id: uuid.UUID,
@@ -390,6 +388,7 @@ class EvaluationService:
             language_id: Optional[uuid.UUID] = None,
             num_steps: int = 1,
     ) -> List[dict]:
+
         assignments = []
 
         branches = await self._get_candidate_branches_with_head_steps(challenge_id)
@@ -430,12 +429,14 @@ class EvaluationService:
                 ids_only=True
             )
 
+            if not sample_ids:
+                raise ValueError("No samples available for evaluation")
+
             for sample_id in sample_ids:
                 instance = await self.create_evaluation_instance(
                     sample_id=sample_id,
                     contribution_type=contribution_type,
                     num_branches=3,
-                    max_depth=5
                 )
                 branch = instance.evaluation_branches[0]
                 step = branch.evaluation_steps[0]
@@ -485,12 +486,6 @@ class EvaluationService:
                 )
             )
         )
-
-        if challenge_id:
-            stmt = stmt.where(EvaluationInstance.challenge_id == challenge_id)
-        else:
-            stmt = stmt.where(EvaluationInstance.challenge_id.is_(None))
-
         result = await self.db.execute(stmt)
         branches: List[EvaluationBranch] = result.scalars().unique().all()
         return branches
@@ -527,61 +522,65 @@ class EvaluationService:
     async def select_top_contributions(
             self,
             instance_id: uuid.UUID,
-            contribution_type: str,
-            limit: int = 5
+            contribution_type: str
     ) -> List[Union[AnnotationContribution, TranscriptionContribution, TranslationContribution]]:
         """
-        Select top contributions for a sample by combining upvotes with word frequency scores.
+        Select top contributions by retrieving the final contributions from each branch's
+        head evaluation step (b_contribution_id and next_alt_contribution_id if present).
         """
-
         from services.contribution_service import ContributionManagementService
-
         contribution_management_service = ContributionManagementService(self.db)
 
-        # 1. Get sample & evaluation instance
-        _, sample_model = await self._get_models(contribution_type)
-        stmt = select(sample_model).where(sample_model.evaluation_instance_id == instance_id)
-        sample = (await self.db.execute(stmt)).scalars().first()
-
-        if not sample:
-            raise ValueError(f"No sample found for eval instance {instance_id} for {contribution_type}")
-
-        instance = sample.evaluation_instance
-        if not instance or not instance.is_complete:
-            raise ValueError(f"Evaluation instance Incomplete")
-
-        # 2. Get contributions from ContributionManagementService
-        filters = ContributionFilter(
-            evaluation_instance_id=instance_id,
-            active=True,
-            flagged=False
+        # Get evaluation instance with all branches
+        stmt = (
+            select(EvaluationInstance)
+            .where(EvaluationInstance.id == instance_id)
+            .options(
+                selectinload(EvaluationInstance.evaluation_branches)
+                .selectinload(EvaluationBranch.evaluation_steps)
+            )
         )
 
-        contributions = await contribution_management_service.list_contributions(
-            contribution_type=contribution_type,
-            filters=filters,
-            skip=0,
-            limit=100
-        )
+        instance = (await self.db.execute(stmt)).scalars().first()
 
-        if not contributions:
+        if not instance:
+            raise ValueError(f"Evaluation instance {instance_id} not found")
+
+        if not instance.is_complete:
+            raise ValueError(f"Evaluation instance is not complete")
+
+        # Collect contribution IDs from head evaluation steps
+        contribution_ids = set()
+
+        for branch in instance.evaluation_branches:
+            # Find head evaluation step for each branch
+            head_step = next((step for step in branch.evaluation_steps
+                              if step.is_complete and step.head), None)
+
+            if head_step:
+                # Add B contribution (best so far)
+                if head_step.b_contribution_id:
+                    contribution_ids.add(head_step.b_contribution_id)
+
+                # Add alternative contribution if available
+                if head_step.next_alt_contribution_id:
+                    contribution_ids.add(head_step.next_alt_contribution_id)
+
+        if not contribution_ids:
             return []
 
-        # 3. Get word frequencies for sample
-        word_freq: dict[str, int] = sample.words
+        # Get contribution objects
+        top_contributions = []
+        contribution_model, _ = await self._get_models(contribution_type)
 
-        # 4. Score contributions
-        def compute_score(contribution) -> float:
-            text = getattr(contribution, "text", "")
-            words = text.lower().split()
-            word_score = sum(word_freq.get(word, 0) for word in words)
-            # return 0.7 * upvotes + 0.3 * word_score
-            return contribution.upvotes + word_score
+        for contribution_id in list(contribution_ids):
+            contribution = await contribution_management_service.get_contribution(
+                contribution_id=contribution_id,
+                contribution_type=contribution_type
+            )
+            if contribution:
+                top_contributions.append(contribution)
 
-        scored_contributions = [(c, compute_score(c)) for c in contributions]
-        scored_contributions.sort(key=lambda x: x[1], reverse=True)
-
-        top_contributions = [c for c, _ in scored_contributions[:limit]]
         return top_contributions
 
     # =========== A/B Testing ==========
@@ -589,8 +588,7 @@ class EvaluationService:
             self,
             instance_id: uuid.UUID,
             contribution_type: str,
-            winners: int = 1,
-            min_votes_threshold: int = 3,
+            winners: int = 1
     ) -> ABTest:
         """
         Initialize A/B testing for an evaluation instance.
@@ -616,12 +614,13 @@ class EvaluationService:
         # Get top contributions for this instance
         top_contributions = await self.select_top_contributions(
             instance_id=instance_id,
-            contribution_type=contribution_type,
-            limit=10  # Get more than we need to ensure enough for tournament
+            contribution_type=contribution_type
         )
 
         if len(top_contributions) < 2:
             raise ValueError("Need at least 2 contributions for A/B testing")
+
+        test_depth = round(math.log(len(top_contributions), 2), 0) + 1 + settings.AB_TEST_MARGIN
 
         # Create the AB test with enhanced metadata
         ab_test = ABTest(
@@ -629,8 +628,7 @@ class EvaluationService:
             target_winner_count=winners,
             stage_count=1,  # Start with stage 1
             current_stage=1,
-            min_votes_threshold=min_votes_threshold,
-
+            test_depth=test_depth,
         )
 
         self.db.add(ab_test)
@@ -672,8 +670,7 @@ class EvaluationService:
                 ab_test_id=ab_test.id,
                 stage_number=1,  # First stage
                 contribution_a_id=uuid.UUID(contribution_a_id),
-                contribution_b_id=uuid.UUID(contribution_b_id),
-                min_votes_required=min_votes_threshold,
+                contribution_b_id=uuid.UUID(contribution_b_id)
             )
             self.db.add(pair)
 
@@ -681,6 +678,76 @@ class EvaluationService:
         await self.db.refresh(ab_test)
 
         return ab_test
+
+    async def cast_vote(
+            self,
+            pair_id: uuid.UUID,
+            user_id: uuid.UUID,
+            selected_contribution_ids: List[uuid.UUID],
+            contribution_type: str,
+            language_id: Optional[uuid.UUID],
+            challenge_id: Optional[uuid.UUID] = None,
+
+    ) -> dict:
+        """
+        Cast a vote for a specific A/B test pair.
+        """
+        # Check if the pair exists
+        stmt = select(ABTestPair).where(ABTestPair.id == pair_id)
+        pair = (await self.db.execute(stmt)).scalars().first()
+
+        if not pair:
+            raise ValueError(f"Pair with ID {pair_id} not found")
+
+        # Check if the vote already exists
+        stmt = select(ABTestVote).where(
+            and_(
+                ABTestVote.pair_id == pair_id,
+                ABTestVote.user_id == user_id
+            )
+        )
+        existing_vote = (await self.db.execute(stmt)).scalars().first()
+
+        if existing_vote:
+            raise ValueError(f"Vote already exists for user {user_id} on pair {pair_id}")
+
+        # Validate selected contributions are part of this pair
+        valid_ids = [pair.contribution_a_id, pair.contribution_b_id]
+        for contribution_id in selected_contribution_ids:
+            if contribution_id not in valid_ids:
+                raise ValueError(f"Selected contribution {contribution_id} is not part of this pair")
+
+        # Create the vote
+        vote = ABTestVote(
+            pair_id=pair.id,
+            user_id=user_id,
+            selected_contribution_ids=selected_contribution_ids,
+            vote_submitted_at=datetime.utcnow()
+        )
+        self.db.add(vote)
+        await self.db.commit()
+        await self.db.refresh(vote)
+
+        result = await self.submit_ab_test_result(
+            vote_id=vote.id,
+            selected_contribution_ids=selected_contribution_ids,
+            challenge_id=challenge_id,
+            language_id=language_id,
+
+        )
+
+        if result["success"]:
+            if result["can_advance"]:
+                try:
+                    advance_result = await self.advance_ab_test(pair.ab_test_id, contribution_type)
+
+                    result["advance"] = advance_result
+
+                except Exception as e:
+
+                    raise ValueError(f"Failed to advance A/B test: {e}")
+
+        return result
 
     async def advance_ab_test(self, ab_test_id: uuid.UUID, contribution_type: str):
         """
@@ -699,7 +766,6 @@ class EvaluationService:
                 ABTestPair.ab_test_id == ab_test.id,
                 ABTestPair.stage_number == current_stage
             )
-
         )
         pairs = (await self.db.execute(stmt)).scalars().all()
 
@@ -708,22 +774,10 @@ class EvaluationService:
         for pair in pairs:
             # Get votes for this pair
             vote_stmt = select(ABTestVote).where(ABTestVote.pair_id == pair.id)
-            votes = (await self.db.execute(vote_stmt)).scalars().all()
-            # Tally votes for each contribution
-            vote_counts = {}
-            for vote in votes:
-                cid = str(vote.selected_contribution_id)
-                vote_counts[cid] = vote_counts.get(cid, 0) + 1
-            # Determine winner (or tie)
-            if not vote_counts:
-                continue  # No votes, skip
-            max_votes = max(vote_counts.values())
-            winners = [cid for cid, count in vote_counts.items() if count == max_votes]
-            if len(winners) == 1:
-                advancing_contributions.append(winners[0])
-            else:
-                # Tie: advance both
-                advancing_contributions.extend(winners)
+            votes = (await self.db.execute(vote_stmt)).scalars().first()
+
+            winners = []
+            winners.extend(votes.selected_contribution_ids)
 
         # Remove duplicates while preserving order
         seen = set()
@@ -735,13 +789,11 @@ class EvaluationService:
         advancing_contributions = unique_advancing
 
         # If only one winner or target_winner_count reached, finalize
-        if (
-                len(advancing_contributions) <= ab_test.target_winner_count and
-                ab_test.current_stage >= ab_test.min_stage_depth
-        ):
+        if ab_test.current_stage >= ab_test.min_stage_depth:
             ab_test.is_complete = True
             ab_test.completed_at = datetime.now(timezone.utc)
             ab_test.final_winner_ids = [uuid.UUID(contribution_id) for contribution_id in advancing_contributions]
+
             await self._mark_contribution_as_winner(uuid.UUID(advancing_contributions[0]), contribution_type)
             await self.db.commit()
             await self.db.refresh(ab_test)
@@ -779,7 +831,7 @@ class EvaluationService:
             )
             self.db.add(pair)
         ab_test.current_stage = next_stage
-        ab_test.stage_count = next_stage
+        ab_test.test_depth = next_stage
         await self.db.commit()
         await self.db.refresh(ab_test)
         return {
@@ -801,6 +853,22 @@ class EvaluationService:
 
         return ab_test
 
+    async def get_random_ab_test(self) -> ABTest:
+        """Get a random incomplete and open A/B test"""
+        stmt = (
+            select(ABTest)
+            .where(ABTest.is_complete == False)  # Only incomplete tests
+            .order_by(func.random())
+            .limit(1)
+        )
+        result = await self.db.execute(stmt)
+        ab_test: ABTest = result.scalars().first()
+
+        if not ab_test:
+            raise ValueError("No incomplete A/B tests found")
+
+        return ab_test
+
     async def get_ab_test_for_instance(self, instance_id: uuid.UUID) -> Optional[ABTest]:
         """Get the A/B test for an evaluation instance"""
         stmt = select(ABTest).where(ABTest.instance_id == instance_id)
@@ -811,9 +879,9 @@ class EvaluationService:
 
     async def assign_ab_test_to_user(
             self,
-            ab_test_id: uuid.UUID,
             user_id: uuid.UUID,
-            proficiency_level: int = 1
+            proficiency_level: int = 1,
+            ab_test_id: uuid.UUID = None
     ) -> Dict[str, Any]:
         """
         Assign an A/B test comparison to a user with randomization.
@@ -821,13 +889,16 @@ class EvaluationService:
         Args:
             ab_test_id: ID of A/B test
             user_id: ID of user to assign to
-            proficiency_level: User's proficiency level (1-5)
+            proficiency_level: User's proficiency level (1-10)
 
         Returns:
             Dict with the pair of contributions to compare and evaluation criteria
         """
         # Get the A/B test
-        ab_test = await self.get_ab_test(ab_test_id)
+        if ab_test_id is None:
+            ab_test = await self.get_random_ab_test()
+        else:
+            ab_test = await self.get_ab_test(ab_test_id)
 
         if ab_test.is_complete:
             return {
@@ -860,15 +931,11 @@ class EvaluationService:
 
         from datetime import datetime, timezone
 
-        TTE_SECONDS = getattr(settings, "TTE", 3600)  # Default to 1 hour if not set
+        TTE_SECONDS = getattr(settings, "TTE", 72000)  # Default to 1 hour if not set
         for pair in pairs:
             # Check if this user has already voted on this pair
             user_voted = any(vote.user_id == user_id for vote in pair.votes)
             if user_voted:
-                continue
-
-            # Check if pair has reached the minimum votes threshold
-            if len(pair.votes) >= pair.min_votes_required:
                 continue
 
             # Check for stale votes (assigned but not completed, and TTE expired)
@@ -954,16 +1021,17 @@ class EvaluationService:
     async def submit_ab_test_result(
             self,
             vote_id: uuid.UUID,
-            selected_contribution_id: uuid.UUID,
+            selected_contribution_ids: List[uuid.UUID],
+            language_id: Optional[uuid.UUID],
             challenge_id: Optional[uuid.UUID] = None,
-            language_id: Optional[uuid.UUID] = None,
+
     ) -> Dict[str, Any]:
         """
         Submit a user's selection for an A/B test comparison with multi-criteria evaluation.
 
         Args:
             vote_id: ID of the vote record
-            selected_contribution_id: ID of the selected contribution
+            selected_contribution_ids: ID of the selected contribution
             challenge_id: Optional ID of the challenge
             language_id: Optional ID of the language
         Returns:
@@ -991,21 +1059,13 @@ class EvaluationService:
                 "final_winners": ab_test.final_winner_id
             }
 
-        # Validate the selected contribution is part of this pair
-        if selected_contribution_id != pair.contribution_a_id and selected_contribution_id != pair.contribution_b_id:
-            return {
-                "error": "Selected contribution is not part of this pair"
-            }
-
-        # Update the vote with the selection and ratings
-        vote.selected_contribution_id = selected_contribution_id
-        vote.vote_submitted_at = datetime.utcnow()
-
-        self.db.add(vote)
-        await self.db.commit()
+        # Mark this pair as complete and set the winner
+        pair.is_complete = True
+        pair.winner_ids.append(selected_contribution_ids)
+        self.db.add(pair)
 
         eval_stats = ParticipationUpdate(
-            is_evaluation=True,
+            is_abtest=True,
             points=settings.POINTS_PER_AB_TEST_VOTE,
         )
 
@@ -1027,51 +1087,27 @@ class EvaluationService:
             stats_data=eval_stats
         )
 
-        # Check if this pair has enough votes to be considered complete
-        stmt = select(ABTestVote).where(ABTestVote.pair_id == pair.id)
-        votes_result = await self.db.execute(stmt)
-        votes = votes_result.scalars().all()
+        # Check if all pairs in this stage are complete
+        stmt = select(ABTestPair).where(
+            and_(
+                ABTestPair.ab_test_id == ab_test.id,
+                ABTestPair.stage_number == pair.stage_number
+            )
+        )
 
-        # Count votes with selections
-        valid_votes = [v for v in votes if v.selected_contribution_id is not None]
+        pairs_result = await self.db.execute(stmt)
+        all_pairs = pairs_result.scalars().all()
+        all_pairs_complete = all(p.is_complete for p in all_pairs)
 
-        # Check if we've reached the minimum votes threshold
-        can_advance = len(valid_votes) >= pair.min_votes_required
-
-        if can_advance:
-            pair.is_complete = True
-
-        # Check if all pairs in this stage have enough votes
-        all_pairs_complete = False
-        if can_advance:
-            # Get all pairs for this stage
-            stmt = select(ABTestPair).where(
-                and_(
-                    ABTestPair.ab_test_id == ab_test.id,
-                    ABTestPair.stage_number == pair.stage_number
-                )
-            ).options(selectinload(ABTestPair.votes))
-
-            pairs_result = await self.db.execute(stmt)
-            all_pairs = pairs_result.scalars().all()
-
-            # Check if all pairs have enough votes
-            all_pairs_complete = all(
-                len([v for v in p.votes if v.selected_contribution_id is not None]) >= p.min_votes_required for p in
-                all_pairs)
+        # Determine if we should complete the AB test or advance to next stage
+        can_advance = all_pairs_complete
 
         # Save changes
         await self.db.commit()
 
         return {
             "success": True,
-            "vote_id": str(vote.id),
-            "pair_id": str(pair.id),
-            "ab_test_id": str(ab_test.id),
             "can_advance": can_advance,
-            "all_pairs_complete": all_pairs_complete,
-            "votes_received": len(valid_votes),
-            "votes_required": pair.min_votes_required
         }
 
     async def _mark_contribution_as_winner(self, contribution_id: uuid.UUID, contribution_type: str) -> None:
@@ -1171,4 +1207,3 @@ class EvaluationService:
             "is_complete": True,
             "final_winner": ab_test.ab_test_data.get("final_winner")
         }
-

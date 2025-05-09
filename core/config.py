@@ -30,10 +30,11 @@ class Settings(BaseModel):
     DEFAULT_BASE_WIDTH: int = 4
 
     TTE: int = 30
+    AB_TEST_MARGIN: int= 3
 
     POINTS_PER_CONTRIBUTION: int = 10
     POINTS_PER_EVALUATION: int = 10
-    POINTS_PER_AB_TEST: int = 5
+    POINTS_PER_AB_TEST: int = 0.5
 
     AB_TEST_WINNER_BONUS: int = 5
 
