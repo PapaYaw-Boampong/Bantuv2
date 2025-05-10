@@ -1,0 +1,74 @@
+version: '3.8'
+
+services:
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    ports:
+      - "8000:8000"
+    environment:
+      - DBHOST=postgres
+      - DBPORT=5432
+      - DBUSER=${DBUSER}
+      - DBPASS=${DBPASS}
+      - DBNAME=${DBNAME}
+      - ACCESS_SECRET_KEY=${ACCESS_SECRET_KEY}
+      - REFRESH_SECRET_KEY=${REFRESH_SECRET_KEY}
+      - ACCESS_TOKEN_EXPIRE_MINUTES=${ACCESS_TOKEN_EXPIRE_MINUTES}
+      - JWT_ALGORITHM=${JWT_ALGORITHM}
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+    depends_on:
+      - postgres
+      - redis
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    ports:
+      - "5173:5173"
+    environment:
+      - VITE_API_URL=http://backend:8000
+    depends_on:
+      - backend
+
+  model-inference:
+    build:
+      context: ./model-inference
+      dockerfile: Dockerfile
+    ports:
+      - "8001:8001"
+    environment:
+      - POSTGRES_HOST=postgres
+      - POSTGRES_PORT=5432
+      - POSTGRES_USER=${POSTGRES_USER}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+      - POSTGRES_DB=${POSTGRES_DB}
+      - HUGGINGFACE_API_TOKEN=${HUGGINGFACE_API_TOKEN}
+      - HUGGINGFACE_MODEL_REPO=${HUGGINGFACE_MODEL_REPO}
+    depends_on:
+      - postgres
+
+  postgres:
+    image: postgres:15
+    ports:
+      - "5432:5432"
+    environment:
+      - POSTGRES_USER=${POSTGRES_USER}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+      - POSTGRES_DB=${POSTGRES_DB}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+
+  redis:
+    image: redis:7
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+
+volumes:
+  postgres_data:
+  redis_data:

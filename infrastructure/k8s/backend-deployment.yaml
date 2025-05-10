@@ -1,0 +1,90 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ntu-backend
+  namespace: ntu
+  labels:
+    app: ntu-backend
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: ntu-backend
+  template:
+    metadata:
+      labels:
+        app: ntu-backend
+    spec:
+      containers:
+      - name: ntu-backend
+        image: gcr.io/${GCP_PROJECT_ID}/ntu-backend:latest
+        ports:
+        - containerPort: 8000
+        env:
+        - name: DBHOST
+          value: ntu-postgres
+        - name: DBPORT
+          value: "5432"
+        - name: DBUSER
+          valueFrom:
+            secretKeyRef:
+              name: ntu-secrets
+              key: db_user
+        - name: DBPASS
+          valueFrom:
+            secretKeyRef:
+              name: ntu-secrets
+              key: db_password
+        - name: DBNAME
+          valueFrom:
+            secretKeyRef:
+              name: ntu-secrets
+              key: db_name
+        - name: ACCESS_SECRET_KEY
+          valueFrom:
+            secretKeyRef:
+              name: ntu-secrets
+              key: access_secret_key
+        - name: REFRESH_SECRET_KEY
+          valueFrom:
+            secretKeyRef:
+              name: ntu-secrets
+              key: refresh_secret_key
+        - name: REDIS_HOST
+          value: ntu-redis
+        - name: REDIS_PORT
+          value: "6379"
+        resources:
+          requests:
+            memory: "256Mi"
+            cpu: "500m"
+          limits:
+            memory: "512Mi"
+            cpu: "1"
+        readinessProbe:
+          httpGet:
+            path: /api/v1/healthcheck
+            port: 8000
+          initialDelaySeconds: 5
+          periodSeconds: 10
+        livenessProbe:
+          httpGet:
+            path: /api/v1/healthcheck
+            port: 8000
+          initialDelaySeconds: 15
+          periodSeconds: 20
+
+---
+
+apiVersion: v1
+kind: Service
+metadata:
+  name: ntu-backend
+  namespace: ntu
+spec:
+  selector:
+    app: ntu-backend
+  ports:
+  - port: 8000
+    targetPort: 8000
+  type: ClusterIP
