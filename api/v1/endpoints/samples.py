@@ -2,6 +2,15 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Path, UploadFile, 
 from sqlalchemy.ext.asyncio import AsyncSession
 from typing import List, Optional
 from uuid import UUID
+import logging
+
+# Set up logging if not already done
+# Set up logging to file
+logging.basicConfig(
+    filename='app.log',  # Specify the log file location
+    level=logging.DEBUG,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+)
 
 from database import get_session
 from models.user import User
@@ -11,11 +20,14 @@ from schemas.sample_data import (
     TranslationSampleCreate,
     AnnotationSeedCreate,
     AnnotationSampleCreate,
-    BulkTranscriptionSampleUpload,
     TranslationPairUpload,
     SampleLockUpdate,
-    SamplePriorityUpdate
+
+    TranslationSampleListResponse,
+    TranscriptionSampleListResponse,
+    AnnotationSampleListResponse
 )
+
 from services.sample_data_service import SampleDataService
 from api.v1.deps import get_current_active_user, get_current_superuser
 from core.config import settings
@@ -43,20 +55,6 @@ async def create_transcription_sample(
         raise HTTPException(status_code=400, detail=str(e))
 
 
-@router.post("/transcription/bulk", summary="Create multiple transcription samples")
-async def bulk_create_transcription_samples(
-        data: BulkTranscriptionSampleUpload,
-        service: SampleDataService = Depends(get_sample_service),
-        current_user: User = Depends(get_current_superuser)
-):
-    """Create multiple transcription samples in a single request"""
-    try:
-        count = await service.bulk_create_transcription_samples(data.samples)
-        return {"success": True, "count": count}
-    except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
-
-
 @router.post("/transcription/csv", summary="Create transcription samples from CSV")
 async def bulk_create_transcription_from_csv(
         language_id: UUID,
@@ -72,7 +70,7 @@ async def bulk_create_transcription_from_csv(
         raise HTTPException(status_code=400, detail=str(e))
 
 
-@router.get("/transcription/", summary="Get transcription samples")
+@router.get("/transcription/", summary="Get transcription samples", response_model=TranscriptionSampleListResponse)
 async def get_transcription_samples(
         language_id: Optional[UUID] = None,
         limit: int = Query(10, ge=1, le=100),
@@ -85,7 +83,8 @@ async def get_transcription_samples(
         samples = await service.get_transcription_samples(
             language_id=language_id,
             limit=limit,
-            priority_threshold=priority_threshold
+            priority_threshold=priority_threshold,
+            user_id=current_user.id
         )
         return {"samples": samples, "count": len(samples)}
     except ValueError as e:
@@ -148,7 +147,7 @@ async def bulk_create_translation_from_csv(
         raise HTTPException(status_code=400, detail=str(e))
 
 
-@router.get("/translation/", summary="Get translation samples")
+@router.get("/translation/", summary="Get translation samples", response_model=TranslationSampleListResponse)
 async def get_translation_samples(
         language_id: Optional[UUID] = None,
         limit: int = Query(10, ge=1, le=100),
@@ -161,8 +160,10 @@ async def get_translation_samples(
         samples = await service.get_translation_samples(
             language_id=language_id,
             limit=limit,
-            priority_threshold=priority_threshold
+            priority_threshold=priority_threshold,
+            user_id=current_user.id
         )
+
         return {"samples": samples, "count": len(samples)}
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
@@ -211,7 +212,7 @@ async def bulk_create_annotation_from_csv(
         raise HTTPException(status_code=400, detail=str(e))
 
 
-@router.get("/annotation/", summary="Get annotation samples")
+@router.get("/annotation/", summary="Get annotation samples", response_model=AnnotationSampleListResponse)
 async def get_annotation_samples(
         language_id: Optional[UUID] = None,
         limit: int = Query(10, ge=1, le=100),
@@ -224,7 +225,8 @@ async def get_annotation_samples(
         samples = await service.get_annotation_samples(
             language_id=language_id,
             limit=limit,
-            priority_threshold=priority_threshold
+            priority_threshold=priority_threshold,
+            user_id=current_user.id
         )
         return {"samples": samples, "count": len(samples)}
     except ValueError as e:
@@ -258,30 +260,6 @@ async def assign_samples_to_user(
 
 # ======== SAMPLE MANAGEMENT ========
 
-@router.patch("/{sample_type}/{sample_id}/priority", summary="Update sample priority")
-async def update_sample_priority(
-        sample_id: UUID = Path(..., description="ID of the sample"),
-        sample_type: str = Path(..., description="Type of sample (transcription, translation, annotation)"),
-        data: SamplePriorityUpdate = None,
-        service: SampleDataService = Depends(get_sample_service),
-        current_user: User = Depends(get_current_superuser)
-):
-    """Update the priority of a sample"""
-    if not data:
-        raise HTTPException(status_code=400, detail="Priority data is required")
-
-    try:
-        result = await service.update_sample_priority(
-            sample_id=sample_id,
-            model_type=sample_type,
-            priority=data.priority
-        )
-        if result:
-            return {"message": f"{sample_type.capitalize()} sample priority updated successfully"}
-        raise HTTPException(status_code=404, detail=f"{sample_type.capitalize()} sample not found")
-    except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
-
 
 @router.patch("/{sample_type}/lock", summary="Lock or unlock samples")
 async def lock_samples(
@@ -309,23 +287,3 @@ async def lock_samples(
         raise HTTPException(status_code=400, detail=str(e))
 
 
-@router.patch("/{sample_type}/{sample_id}/contribution-count", summary="Update sample contribution count")
-async def update_sample_contribution_count(
-        sample_id: UUID = Path(..., description="ID of the sample"),
-        sample_type: str = Path(..., description="Type of sample (transcription, translation, annotation)"),
-        service: SampleDataService = Depends(get_sample_service),
-        current_user: User = Depends(get_current_superuser)
-):
-    """Increment the contribution count for a sample"""
-    try:
-        sample = await service.update_sample_with_contribution(
-            sample_id=sample_id,
-            sample_type=sample_type
-        )
-        return {
-            "sample_id": str(sample.id),
-            "contribution_count": sample.seed_count,
-            "message": f"{sample_type.capitalize()} sample contribution count updated"
-        }
-    except ValueError as e:
-        raise HTTPException(status_code=404, detail=str(e))

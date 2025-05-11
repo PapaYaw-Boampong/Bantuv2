@@ -391,11 +391,16 @@ class EvaluationService:
 
         assignments = []
 
-        branches = await self._get_candidate_branches_with_head_steps(challenge_id)
+        branches = await self._get_candidate_branches_with_head_steps()
+        if not branches:
+            return assignments
         branches = filter_user_participated(branches, user_id)
         prioritized = prioritize_branches(branches, proficiency_level)
 
         steps_assigned = 0
+
+        if not prioritized:
+            return assignments
 
         # 1. Assign from existing prioritized branches
         for branch in prioritized:
@@ -404,6 +409,12 @@ class EvaluationService:
 
             step = await self._assign_or_create_step(user_id, branch)
 
+            # Get complete step data with all contributions
+            step_with_contributions = await self.get_evaluation_step_with_contributions(
+                step_id=step.id,
+                contribution_type=contribution_type
+            )
+
             assignments.append({
                 "task_type": "evaluation_step",
                 "branch_id": str(branch.id),
@@ -411,7 +422,8 @@ class EvaluationService:
                 "max_depth": branch.max_depth,
                 "step_id": str(step.id),
                 "head": step.head,
-                "note": "Assigned from existing branch"
+                "note": "Assigned from existing branch",
+                "step_data": step_with_contributions
             })
             steps_assigned += 1
 
@@ -445,6 +457,12 @@ class EvaluationService:
                 await self.db.commit()
                 await self.db.refresh(step)
 
+                # Get complete step data with all contributions
+                step_with_contributions = await self.get_evaluation_step_with_contributions(
+                    step_id=step.id,
+                    contribution_type=contribution_type
+                )
+
                 assignments.append({
                     "task_type": "evaluation_step",
                     "branch_id": str(branch.id),
@@ -452,7 +470,8 @@ class EvaluationService:
                     "max_depth": branch.max_depth,
                     "step_id": str(step.id),
                     "head": step.head,
-                    "note": "New evaluation instance created due to shortage"
+                    "note": "New evaluation instance created due to shortage",
+                    "step_data": step_with_contributions
                 })
 
                 steps_assigned += 1
@@ -461,9 +480,89 @@ class EvaluationService:
 
         return assignments
 
-    async def _get_candidate_branches_with_head_steps(
+    async def get_evaluation_step_with_contributions(
             self,
-            challenge_id: Optional[uuid.UUID]
+            step_id: uuid.UUID,
+            contribution_type: str
+    ) -> Dict[str, Any]:
+        """
+        Get an evaluation step by ID and fetch all associated contributions
+
+        Args:
+            step_id: The ID of the evaluation step
+            contribution_type: The type of contribution (annotation, transcription, translation)
+
+        Returns:
+            Dict with step data and all associated contribution objects
+        """
+        # Get the evaluation step
+        step = await self.get_evaluation_step(step_id)
+
+        # Initialize contribution service to fetch contributions
+        from services.contribution_service import ContributionManagementService
+        contribution_service = ContributionManagementService(self.db)
+
+        # Dictionary to store contribution objects
+        contributions = {}
+
+        # Fetch the best contribution (b_contribution)
+        if step.b_contribution_id:
+            try:
+                b_contribution = await contribution_service.get_contribution(
+                    step.b_contribution_id,
+                    contribution_type
+                )
+                contributions["b_contribution"] = b_contribution
+            except Exception as e:
+                contributions["b_contribution"] = None
+
+        # Fetch the alternative contribution (a_contribution) if present
+        if step.a_contribution_id:
+            try:
+                a_contribution = await contribution_service.get_contribution(
+                    step.a_contribution_id,
+                    contribution_type
+                )
+                contributions["a_contribution"] = a_contribution
+            except Exception as e:
+                contributions["a_contribution"] = None
+
+        # Fetch the next alternative contribution if present
+        if step.next_alt_contribution_id:
+            try:
+                next_alt_contribution = await contribution_service.get_contribution(
+                    step.next_alt_contribution_id,
+                    contribution_type
+                )
+                contributions["next_alt_contribution"] = next_alt_contribution
+
+            except Exception as e:
+                contributions["next_alt_contribution"] = None
+
+        # Get the branch to access instance information
+        stmt = (
+            select(EvaluationBranch)
+            .where(EvaluationBranch.id == step.branch_id)
+            .options(selectinload(EvaluationBranch.evaluation_instance))
+        )
+        result = await self.db.execute(stmt)
+        branch = result.scalars().first()
+
+        # Build the response object
+        step_data = {
+            "step_id": str(step.id),
+            "branch_id": str(step.branch_id),
+            "step_number": step.step_number,
+            "run_ab_test": step.run_ab_test,
+            "abtest_decision": step.abtest_decision,
+            "assigned_at": step.assigned_at,
+            "contributions": contributions
+        }
+
+        return step_data
+
+    async def _get_candidate_branches_with_head_steps(
+            self
     ) -> List[EvaluationBranch]:
         stmt = (
             select(EvaluationBranch)

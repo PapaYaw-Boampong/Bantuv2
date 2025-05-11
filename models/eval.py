@@ -14,7 +14,7 @@ class EvaluationInstance(SQLModel, table=True):
     __tablename__ = "evaluation_instance"
     id: uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True)
     num_branches: int = 3
-    challenge_id: uuid.UUID = Field(foreign_key="challenge.id")
+    challenge_id: uuid.UUID = Field(foreign_key="challenge.id", nullable=True)
     is_complete: bool = False
 
     transcription_sample: Optional["TranscriptionSample"] = Relationship(

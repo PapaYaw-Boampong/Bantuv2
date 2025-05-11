@@ -76,19 +76,6 @@ async def create_custom_contribution(
 
 # ======== READ ========
 
-@router.get("/{contribution_type}/{contribution_id}", summary="Get a specific contribution")
-async def get_contribution(
-        contribution_id: UUID = Path(..., description="The ID of the contribution to retrieve"),
-        contribution_type: str = Path(..., description="Type of contribution (annotation, transcription, translation)"),
-        service: ContributionManagementService = Depends(get_contribution_service),
-        current_user: User = Depends(get_current_active_user)
-):
-    try:
-        return await service.get_contribution(contribution_id, contribution_type)
-    except ValueError as e:
-        raise HTTPException(status_code=404, detail=str(e))
-
-
 @router.get("/stats/", summary="Get contribution statistics")
 async def get_contribution_stats(
         contribution_type: Optional[str] = None,

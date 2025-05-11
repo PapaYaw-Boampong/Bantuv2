@@ -87,7 +87,9 @@ class ContributionManagementService:
             "active": False,
             "flagged": False,
             "accepted": False,
-            "ancestors": [user_id],
+            "ancestors": {
+                str(user_id): [0, str(challenge_id)] if challenge_id else [0, False]
+            }
         }
 
         language_service = LanguageService(self.db)
@@ -211,8 +213,6 @@ class ContributionManagementService:
                 query = query.where(model_class.sample_id == filters.sample_id)
                 if filters.flagged is not None:
                     query = query.where(model_class.flagged == filters.flagged)
-                if filters.passed is not None:
-                    query = query.where(model_class.accepted == filters.accepted)
                 if filters.created_after:
                     query = query.where(model_class.created_at >= filters.created_after)
                 if filters.created_before:
@@ -226,33 +226,6 @@ class ContributionManagementService:
         # Execute query
         result = await self.db.execute(query)
         return result.scalars().all()
-
-    # async def get_user_contributions(
-    #         self,
-    #         user_id: uuid.UUID,
-    #         contribution_type: Optional[str] = None,
-    #         active_only: bool = True
-    # ) -> Dict[str, list]:
-    #     """Get all contributions by a specific user, optionally filtered by type"""
-    #     result = {}
-    #
-    #     types_to_fetch = [contribution_type] if contribution_type else self.contribution_types.keys()
-    #
-    #     for ctype in types_to_fetch:
-    #         model_class = await self._get_model_class(ctype)
-    #         query = select(model_class).where(model_class.user_id == user_id)
-    #
-    #         if active_only:
-    #             query = query.where(model_class.active == True)
-    #
-    #         db_result = await self.db.execute(query)
-    #         contributions = db_result.scalars().all()
-    #
-    #         result[ctype] = contributions
-    #
-    #     return result if contribution_type is None else result[contribution_type]
-
-        # =========== Update Operations ==========
 
     async def update_contribution(
             self,
@@ -387,60 +360,6 @@ class ContributionManagementService:
         return stats
 
     # =========== Integration with other services ==========
-    async def find_samples_for_user(
-            self,
-            user_id: uuid.UUID,
-            contribution_type: str,
-            language_id: uuid.UUID,
-            limit: int = 1
-
-    ) -> List[uuid.UUID]:
-        """
-            Assign a sample to a user for contribution
-        """
-        sample_class = await self._get_sample_class(contribution_type)
-
-        # Build query to find available samples
-        # (samples without contributions from this user)
-        contribution_class = await self._get_model_class(contribution_type)
-
-        # Get width setting based on contribution type
-        width_settings = {
-            "annotation": settings.ANNOTATION_BASE_WIDTH,
-            "transcription": settings.TRANSCRIPTION_BASE_WIDTH,
-            "translation": settings.TRANSLATION_BASE_WIDTH
-        }
-
-        if contribution_type not in width_settings:
-            raise ValueError(f"Unsupported contribution type: {contribution_type}")
-        width = width_settings[contribution_type]
-
-        # Find sample IDs that the user has already contributed to
-        user_contributed_subquery = (
-            select(getattr(contribution_class, "sample_id"))
-            .where(contribution_class.user_id == user_id)
-            .subquery()
-        )
-
-        # Select a sample that hasn't been contributed to by this user
-        query = (
-            select(getattr(sample_class, "id"))
-            .where(sample_class.id.not_in(select(user_contributed_subquery.c.sample_id)))
-            .where(sample_class.active == False)
-            .where(sample_class.seed_count < width)
-            .where(sample_class.language_id == language_id)
-        )
-
-        result = await self.db.execute(query)
-        samples = result.scalars()
-
-        if not result:
-            raise ValueError(f"No available {contribution_type} samples found for user")
-
-        # Randomly select from available samples up to the limit
-        selected_samples = [choice(samples) for _ in range(min(limit, len(samples)))]
-        return selected_samples
-
     async def update_ancestors(
             self,
             contribution_id: uuid.UUID,

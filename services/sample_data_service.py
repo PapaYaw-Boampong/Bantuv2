@@ -1,19 +1,24 @@
 import uuid
-from typing import List, Dict, Optional, Any
+from typing import List, Dict, Optional, Any, Type
 from datetime import datetime
-import random
+from random import choice
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, update, func, and_
 from sqlalchemy.orm import selectinload
-
+from sqlalchemy.inspection import inspect
 from core.config import settings
+
 from models import (
-    TranscriptionSample,
+    AnnotationContribution,
+    TranscriptionContribution,
+    TranslationContribution,
+
     TranslationSeedData,
-    TranslationSample,
     AnnotationSeedData,
+
     AnnotationSample,
-    Language
+    TranscriptionSample,
+    TranslationSample,
 )
 from schemas.sample_data import (
     TranscriptionSampleCreate,
@@ -36,8 +41,41 @@ def read_csv_upload(file: UploadFile) -> pd.DataFrame:
 class SampleDataService:
     def __init__(self, db: AsyncSession):
         self.db = db
+        self.contribution_types = {
+            "annotation": AnnotationContribution,
+            "transcription": TranscriptionContribution,
+            "translation": TranslationContribution
+        }
+        self.sample_types = {
+            "annotation": AnnotationSample,
+            "transcription": TranscriptionSample,
+            "translation": TranslationSample
+        }
+
+        self.seed_types = {
+            "annotation": AnnotationSeedData,
+            "translation": TranslationSeedData
+        }
+
+    async def _get_model_class(self, contribution_type: str) -> Type:
+        """Get the appropriate model class based on contribution type"""
+        if contribution_type not in self.contribution_types:
+            raise ValueError(f"Invalid contribution type: {contribution_type}")
+        return self.contribution_types[contribution_type]
+
+    async def _get_sample_class(self, contribution_type: str) -> Type:
+        """Get the appropriate sample class based on contribution type"""
+        if contribution_type not in self.sample_types:
+            raise ValueError(f"Invalid contribution type: {contribution_type}")
+        return self.sample_types[contribution_type]
 
     # --- Core Sample Management ---
+
+    async def get_seed_data(self, seed_id: uuid.UUID) -> Optional[TranslationSeedData]:
+        """Fetch seed data by ID"""
+        stmt = select(TranslationSeedData).where(TranslationSeedData.id == seed_id)
+        result = await self.db.execute(stmt)
+        return result.scalar_one_or_none()
 
     async def get_samples(
             self,
@@ -49,6 +87,8 @@ class SampleDataService:
             active: bool = False,
             evaluate: bool = False,
             ids_only: bool = False,
+            include_seed_data: bool = False,
+            user_id: Optional[uuid.UUID] = None,
     ) -> List:
         """Generic sample fetcher with optional ID-only mode and priority-based selection"""
 
@@ -68,15 +108,40 @@ class SampleDataService:
             base_conditions = [
                 model.active == active,
                 model.priority >= priority_threshold,
-                model.store < max_instance_width,
+                model.seed_count < max_instance_width,
             ]
 
         # Add language condition if provided
         if language_id:
             base_conditions.append(model.language_id == language_id)
 
+        contribution_class = await self._get_model_class(contribution_type)
+
+        user_contributed_subquery = (
+            select(getattr(contribution_class, "sample_id"))
+            .where(contribution_class.user_id == user_id)
+            .subquery()
+        )
+
+        # Construct the query excluding samples the user has already contributed to
+        query = select(model).where(and_(*base_conditions))
+        query = query.where(model.id.not_in(select(user_contributed_subquery.c.sample_id)))
+
         # Select only IDs if requested
-        query = select(model.id if ids_only else model).where(and_(*base_conditions))
+        if ids_only:
+            query = select(model.id)
+
+        # Conditionally preload seed data
+        if include_seed_data and (not ids_only) and (contribution_type in self.seed_types):
+            seed_model = self.seed_types[contribution_type]
+            mapper = inspect(model)
+
+            # Find the relationship key that matches the seed model
+            for rel in mapper.relationships:
+                if rel.mapper.class_ == seed_model:
+                    query = query.options(selectinload(getattr(model, rel.key)))
+                    break
+
         query = query.order_by(model.priority.desc(), func.random()).limit(limit)
 
         result = await self.db.execute(query)
@@ -100,7 +165,8 @@ class SampleDataService:
             self,
             language_id: Optional[uuid.UUID] = None,
             limit: int = 10,
-            priority_threshold: int = 0
+            priority_threshold: int = 0,
+            user_id: Optional[uuid.UUID] = None
     ) -> List[TranscriptionSample]:
         """Get transcription samples with priority-based selection"""
         return await self.get_samples(
@@ -108,7 +174,9 @@ class SampleDataService:
             "transcription",
             language_id,
             limit,
-            priority_threshold
+            priority_threshold,
+            include_seed_data=True,
+            user_id=user_id
         )
 
     # --- Translation Samples ---
@@ -139,7 +207,8 @@ class SampleDataService:
             self,
             language_id: Optional[uuid.UUID] = None,
             limit: int = 10,
-            priority_threshold: int = 0
+            priority_threshold: int = 0,
+            user_id: Optional[uuid.UUID] = None
     ) -> List[TranslationSample]:
         """Get translation samples with priority-based selection"""
         return await self.get_samples(
@@ -147,32 +216,10 @@ class SampleDataService:
             "translation",
             language_id,
             limit,
-            priority_threshold
+            priority_threshold,
+            include_seed_data=True,
+            user_id=user_id
         )
-
-    # async def get_sample_word_frequencies(
-    #         self,
-    #         sample_id: uuid.UUID,
-    #         sample_type: str,
-    # ) -> Dict[str, int]:
-    #     """Get word frequencies for a specific sample"""
-    #     sample_model = {
-    #         "translation": TranslationSample,
-    #         "annotation": AnnotationSample,
-    #         "transcription": TranscriptionSample
-    #     }.get(sample_type)
-    #
-    #     stmt = select(sample_model).where(
-    #         TranslationSample.id == sample_id,
-    #     )
-    #
-    #     result = await self.db.execute(stmt)
-    #     sample = result.scalar_one_or_none()
-    #
-    #     if not sample or not sample.words:
-    #         return {}
-    #
-    #     return sample.words
 
     # --- Annotation Samples ---
 
@@ -202,7 +249,8 @@ class SampleDataService:
             self,
             language_id: Optional[uuid.UUID] = None,
             limit: int = 10,
-            priority_threshold: int = 0
+            priority_threshold: int = 0,
+            user_id: Optional[uuid.UUID] = None
     ) -> List[AnnotationSample]:
         """Get annotation samples with priority-based selection"""
         return await self.get_samples(
@@ -210,7 +258,9 @@ class SampleDataService:
             "annotation",
             language_id,
             limit,
-            priority_threshold
+            priority_threshold,
+            include_seed_data=True,
+            user_id=user_id
         )
 
     # --- Sample Assignment & updates---
@@ -221,10 +271,8 @@ class SampleDataService:
             sample_type: str,
             limit: int = 3
     ) -> List[Dict[str, Any]]:
-        from services.contribution_service import ContributionManagementService
-        contributions = ContributionManagementService(self.db)
 
-        sample_ids = await contributions.find_samples_for_user(language_id, sample_type, user_id, limit)
+        sample_ids = await self.find_samples_for_user(language_id, sample_type, user_id, limit)
 
         if not sample_ids:
             return []
@@ -286,6 +334,60 @@ class SampleDataService:
         await self.lock_samples(sample_ids, sample_type)
 
         return structured_samples
+
+    async def find_samples_for_user(
+            self,
+            user_id: uuid.UUID,
+            contribution_type: str,
+            language_id: uuid.UUID,
+            limit: int = 1
+
+    ) -> List[uuid.UUID]:
+        """
+            Assign a sample to a user for contribution
+        """
+        sample_class = await self._get_sample_class(contribution_type)
+
+        # Build query to find available samples
+        # (samples without contributions from this user)
+        contribution_class = await self._get_model_class(contribution_type)
+
+        # Get width setting based on contribution type
+        width_settings = {
+            "annotation": settings.ANNOTATION_BASE_WIDTH,
+            "transcription": settings.TRANSCRIPTION_BASE_WIDTH,
+            "translation": settings.TRANSLATION_BASE_WIDTH
+        }
+
+        if contribution_type not in width_settings:
+            raise ValueError(f"Unsupported contribution type: {contribution_type}")
+        width = width_settings[contribution_type]
+
+        # Find sample IDs that the user has already contributed to
+        user_contributed_subquery = (
+            select(getattr(contribution_class, "sample_id"))
+            .where(contribution_class.user_id == user_id)
+            .subquery()
+        )
+
+        # Select a sample that hasn't been contributed to by this user
+        query = (
+            select(getattr(sample_class, "id"))
+            .where(sample_class.id.not_in(select(user_contributed_subquery.c.sample_id)))
+            .where(sample_class.active == False)
+            .where(sample_class.seed_count < width)
+            .where(sample_class.language_id == language_id)
+        )
+
+        result = await self.db.execute(query)
+        samples = result.scalars()
+
+        if not result:
+            raise ValueError(f"No available {contribution_type} samples found for user")
+
+        # Randomly select from available samples up to the limit
+        selected_samples = [choice(samples) for _ in range(min(limit, len(samples)))]
+        return selected_samples
 
     async def update_sample_with_contribution(
             self,

@@ -220,9 +220,9 @@ class UserLanguageCrud:
         if not user_language:
             raise ValueError("UserLanguage not found")
 
-        hours = stats_data.get("hours", 0)
-        sentences = stats_data.get("sentences", 0)
-        tokens = stats_data.get("tokens", 0)
+        hours = getattr(stats_data, "hours", 0)
+        sentences = getattr(stats_data, "sentences", 0)
+        tokens = getattr(stats_data, "tokens", 0)
 
         return await self.update_stats(
             user_language,

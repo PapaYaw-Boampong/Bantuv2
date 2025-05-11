@@ -9,13 +9,61 @@ from pydantic import BaseModel, Field, ConfigDict, UUID4, field_validator
 class SampleBase(BaseModel):
     id: UUID4
     language_id: Optional[uuid.UUID]
-    category: Optional[str]
     active: bool
     priority: Optional[int] = 0
     created_at: Optional[datetime]
-    updated_at: Optional[datetime]
-
+    evaluation_instance_id: Optional[str];
     model_config = ConfigDict(from_attributes=True)
+
+
+# ----------- Seed Data Output Schemas -----------
+class TranslationSeedDataOut(BaseModel):
+    id: UUID4
+    original_text: str
+    category: Optional[str]
+    model_config = ConfigDict(from_attributes=True)
+
+
+class AnnotationSeedDataOut(BaseModel):
+    id: UUID4
+    image_url: str
+    annotation_text: str
+    category: Optional[str]
+    model_config = ConfigDict(from_attributes=True)
+
+
+# ----------- Sample Output Schemas -----------
+
+class TranscriptionSampleOut(SampleBase):
+    category: Optional[str]
+    transcription_text: str
+
+
+class TranslationSampleOut(SampleBase):
+    seed_data_id: uuid.UUID
+    translation_seed_data: Optional[TranslationSeedDataOut]
+
+
+class AnnotationSampleOut(SampleBase):
+    seed_data_id: uuid.UUID
+    annotation_seed_data: Optional[AnnotationSeedDataOut]
+
+
+# ----------- Sample List Output Schemas -----------
+
+class TranslationSampleListResponse(BaseModel):
+    samples: List[TranslationSampleOut]
+    count: int
+
+
+class TranscriptionSampleListResponse(BaseModel):
+    samples: List[TranscriptionSampleOut]
+    count: int
+
+
+class AnnotationSampleListResponse(BaseModel):
+    samples: List[AnnotationSampleOut]
+    count: int
 
 
 # ----------- Transcription -----------

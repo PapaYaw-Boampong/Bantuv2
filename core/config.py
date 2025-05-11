@@ -27,10 +27,14 @@ class Settings(BaseModel):
     TRANSLATION_BASE_WIDTH: int = 3
     ANNOTATION_BASE_WIDTH: int = 4
 
+    TRANSCRIPTION_PIPE_DEPTH: int = 3
+    TRANSLATION_PIPE_DEPTH: int = 3
+    ANNOTATION_PIPE_DEPTH: int = 3
+
     DEFAULT_BASE_WIDTH: int = 4
 
     TTE: int = 30
-    AB_TEST_MARGIN: int= 3
+    AB_TEST_MARGIN: int = 3
 
     POINTS_PER_CONTRIBUTION: int = 10
     POINTS_PER_EVALUATION: int = 10

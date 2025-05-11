@@ -50,7 +50,7 @@ class TranscriptionSample(SQLModel, table=True):
 
     active: bool = Field(default=False)  # Becomes True when assigned to a user
     eval: bool = Field(default=False)  # Becomes True when assigned to an evaluation instance
-    store: int = Field(default=0)  # Store for the sample, used for tracking
+    seed_count: int = Field(default=0)  # Store for the sample, used for tracking
 
     priority: int = Field(default=0)  # Priority for transcription, higher means more important
 
@@ -188,8 +188,6 @@ class AnnotationSeedData(SQLModel, table=True):
 
 
 # ===================== ANNOTATION SAMPLE TABLE =====================
-
-
 class AnnotationSample(SQLModel, table=True):
     """
         Represents a sample of annotated data.
