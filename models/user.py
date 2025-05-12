@@ -148,7 +148,7 @@ class UserLanguageStats(SQLModel, table=True):
     # Statistics
     total_hours_speech: int = Field(default=0)
     total_sentences_translated: int = Field(default=0)
-    total_tokens_produced: int = Field(default=0)
+    total_annotation_tokens: int = Field(default=0)
 
     # Reputation Metrics
     contribution_count: int = Field(default=0)

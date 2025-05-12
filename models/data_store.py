@@ -41,7 +41,7 @@ class TranscriptionSample(SQLModel, table=True):
         default=[]
     )
 
-    transcription_text: str  # Stores the transcribed text
+    transcription_text: str  = Field(default=None, nullable=True)   # Stores the transcribed text
 
     category: str = Field(default=None, nullable=True)  # e.g., "daily conversation", "technical", "medical"
 
@@ -124,7 +124,7 @@ class TranslationSample(SQLModel, table=True):
         foreign_key="evaluation_instance.id"
     )
 
-    translated_text: str  # Final translated version of the original text
+    translated_text: str = Field(default=None, nullable=True)  # Final translated version of the original text
 
     created_at: datetime = Field(default_factory=datetime.utcnow)
 

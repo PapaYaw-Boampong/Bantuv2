@@ -22,7 +22,7 @@ class MilestoneUpdate(BaseModel):
 
 
 class MilestoneResponse(BaseModel):
-    id: str
+    id: UUID4
     name: str
     description: Optional[str] = None
     reward_type: RewardType

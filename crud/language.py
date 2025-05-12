@@ -8,6 +8,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from datetime import datetime
 from uuid import UUID
 from fastapi import HTTPException, status
+from services.user_service import UserService
+from sqlalchemy import and_
 
 PROFICIENCY_LEVELS = {
     "beginner": 3.0,
@@ -208,28 +210,28 @@ class UserLanguageCrud:
         await self.db.refresh(user_language)
         return user_language
 
-    async def update_language_stats(
-            self,
-            language_id: UUID,
-            user_id: UUID,
-            stats_data: dict
-    ) -> Optional[UserLanguage]:
-
-        user_language = await self.get_by_user_and_language(user_id, language_id)
-
-        if not user_language:
-            raise ValueError("UserLanguage not found")
-
-        hours = getattr(stats_data, "hours", 0)
-        sentences = getattr(stats_data, "sentences", 0)
-        tokens = getattr(stats_data, "tokens", 0)
-
-        return await self.update_stats(
-            user_language,
-            hours=hours,
-            sentences=sentences,
-            tokens=tokens
-        )
+    # async def update_language_stats(
+    #         self,
+    #         language_id: UUID,
+    #         user_id: UUID,
+    #         stats_data: dict
+    # ) -> Optional[UserLanguage]:
+    #
+    #     user_language = await self.get_by_user_and_language(user_id, language_id)
+    #
+    #     if not user_language:
+    #         raise ValueError("UserLanguage not found")
+    #
+    #     hours = getattr(stats_data, "hours", 0)
+    #     sentences = getattr(stats_data, "sentences", 0)
+    #     tokens = getattr(stats_data, "tokens", 0)
+    #
+    #     return await self.update_stats(
+    #         user_language,
+    #         hours=hours,
+    #         sentences=sentences,
+    #         tokens=tokens
+    #     )
 
 
 class UserLanguageStatsCrud:
@@ -257,16 +259,24 @@ class UserLanguageStatsCrud:
         result = await self.db.execute(statement)
         return result.scalars().first()
 
-    async def get_by_user_and_language_task_type(self, user_id: UUID, language_id: UUID, task_type: str
-                                                 ) -> Optional[UserLanguageStats]:
+    async def get_by_user_and_language_task_type(
+            self, user_id: UUID,
+            language_id: UUID,
+            task_type: str
+    ) -> Optional[UserLanguageStats]:
         """
-        Get a user-language relationship by user ID, language ID, and task type (ASYNC)
+        Get a user-language-task relationship by user ID, language ID, and task type (ASYNC)
         """
         statement = (
             select(UserLanguageStats)
-            .where(UserLanguageStats.user_language_id == user_id,
-                   UserLanguageStats.language_id == language_id,
-                   UserLanguageStats.task_type == task_type)
+            .join(UserLanguage, UserLanguageStats.user_language_id == UserLanguage.id)
+            .where(
+                and_(
+                    UserLanguage.user_id == user_id,
+                    UserLanguage.language_id == language_id,
+                    UserLanguageStats.task_type == task_type
+                )
+            )
         )
         result = await self.db.execute(statement)
         return result.scalars().first()
@@ -290,7 +300,6 @@ class UserLanguageStatsCrud:
     async def update_stats(
             self,
             user_language_stats: UserLanguageStats,
-
             stats_data: UserLanguageStatsUpdate = None,
     ) -> UserLanguageStats:
         if stats_data.is_contribution:
@@ -298,9 +307,9 @@ class UserLanguageStatsCrud:
         if stats_data.is_evaluation:
             user_language_stats.evaluation_count += 1
 
-        user_language_stats.total_hours_speech += stats_data.hours
-        user_language_stats.total_sentences_translated += stats_data.sentences
-        user_language_stats.total_tokens_produced += stats_data.tokens
+        user_language_stats.total_hours_speech += stats_data.total_hours_speech
+        user_language_stats.total_sentences_translated += stats_data.total_sentences_translated
+        user_language_stats.total_annotation_tokens += stats_data.total_annotation_tokens
 
         user_language_stats.updated_at = datetime.utcnow()
 
@@ -322,11 +331,14 @@ class UserLanguageStatsCrud:
             if not user_language:
                 raise ValueError("UserLanguage not found")
 
-            await self.create({
+            user_language_stats = await self.create({
                 "user_language_id": user_language.id,
                 "task_type": task_type,
                 "proficiency": PROFICIENCY_LEVELS.get(user_language.proficiency, 3.0),
             })
+
+        us = UserService(self.db)
+        await us.update_user_stats(str(user_id), stats_data)
 
         return await self.update_stats(
             user_language_stats,
@@ -361,11 +373,15 @@ class UserLanguageStatsCrud:
         # Update scores based on role
         if is_contribution and acceptance_score is not None:
             user_language_stats.accepted_contributions += 1
-            user_language_stats.contribution_acceptance_score = ((user_language_stats.contribution_acceptance_score * user_language_stats.contribution_score_counter) + acceptance_score)/(user_language_stats.contribution_score_counter + 1)
+            user_language_stats.contribution_acceptance_score = ((
+                                                                         user_language_stats.contribution_acceptance_score * user_language_stats.contribution_score_counter) + acceptance_score) / (
+                                                                        user_language_stats.contribution_score_counter + 1)
 
         if is_evaluation and acceptance_score is not None:
             user_language_stats.accepted_evaluations += 1
-            user_language_stats.evaluation_acceptance_score = ((user_language_stats.evaluation_acceptance_score * user_language_stats.eval_score_counter) + acceptance_score)/(user_language_stats.eval_score_counter + 1)
+            user_language_stats.evaluation_acceptance_score = ((
+                                                                       user_language_stats.evaluation_acceptance_score * user_language_stats.eval_score_counter) + acceptance_score) / (
+                                                                      user_language_stats.eval_score_counter + 1)
 
         # Common updates for both roles
         user_language_stats.updated_at = datetime.utcnow()
@@ -374,7 +390,57 @@ class UserLanguageStatsCrud:
         await self.db.refresh(user_language_stats)
         return user_language_stats
 
+    async def get_user_language_stats(self, user_language_id: str) -> List[dict]:
+        """
+        Get all statistics for a specific user-language association
+        """
+        try:
+            ul_id = UUID(user_language_id.strip())
+        except ValueError:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Invalid user-language ID format."
+            )
 
+        # First check if the user_language exists
+        user_language = await UserLanguageCrud(self.db).get_by_id(ul_id)
+        if not user_language:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="User-Language association not found."
+            )
 
+        # Get all stats entries for this user_language
+        stats = await self.get_stats_by_user_language(ul_id)
 
+        stats_data = []
+        for entry in stats:
+            stats_data.append({
+                "id": str(entry.id),
+                "task_type": entry.task_type,
+                "proficiency": entry.proficiency,
+                "statistics": {
+                    "total_hours_speech": entry.total_hours_speech,
+                    "total_sentences_translated": entry.total_sentences_translated,
+                    "total_annotation_tokens": entry.total_annotation_tokens,
+                },
+                "reputation": {
+                    "contribution_acceptance_score": entry.contribution_acceptance_score,
+                    "evaluation_acceptance_score": entry.evaluation_acceptance_score
+                },
+                "created_at": entry.created_at.isoformat(),
+                "updated_at": entry.updated_at.isoformat()
+            })
 
+        return stats_data
+
+    async def get_stats_by_user_language(self, user_language_id: UUID) -> List[UserLanguageStats]:
+        """
+        Get all stats entries for a specific user language relationship
+        """
+        statement = (
+            select(UserLanguageStats)
+            .where(UserLanguageStats.user_language_id == user_language_id)
+        )
+        result = await self.db.execute(statement)
+        return list(result.scalars().all())

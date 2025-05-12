@@ -32,6 +32,8 @@ from schemas.sample_data import (
     TranslationSeedCreate
 )
 
+from schemas.language import UserLanguageStatsUpdate
+
 from schemas.challenge import ParticipationUpdate
 
 
@@ -111,7 +113,7 @@ class ContributionManagementService:
             if contribution_type == "annotation":
                 contribution_data["img_url"] = data.img_url
                 token_count = len(word_list)
-                stats_data.total_tokens_produced = token_count
+                stats_data.total_annotation_tokens = token_count
 
             elif contribution_type == "translation":
                 contribution_data["sample_text"] = data.sample_text
@@ -136,11 +138,20 @@ class ContributionManagementService:
                 stats_data=stats_data
             )
 
+        user_stats_data = UserLanguageStatsUpdate(
+            total_hours_speech=stats_data.total_hours_speech,
+            total_sentences_translated=stats_data.total_sentences_translated,
+            total_annotation_tokens=stats_data.total_annotation_tokens,
+            is_contribution=stats_data.is_contribution,
+            is_evaluation=stats_data.is_evaluation
+        )
+
         # global stats
-        await language_service.user_language_repository.update_language_stats(
+        await language_service.user_language_stats_repository.update_language_stats(
             user_id=user_id,
             language_id=language_id,
-            stats_data=stats_data
+            task_type=contribution_type,
+            stats_data=user_stats_data
         )
 
         await self.update_ancestors(
@@ -151,8 +162,6 @@ class ContributionManagementService:
         )
 
         from services.sample_data_service import SampleDataService
-
-        # Update sample with contribution metadata
 
         sample_service = SampleDataService(self.db)
         await sample_service.update_sample_with_contribution(

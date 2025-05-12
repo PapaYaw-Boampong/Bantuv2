@@ -7,6 +7,7 @@ from sqlalchemy import select, update, func, and_
 from sqlalchemy.orm import selectinload
 from sqlalchemy.inspection import inspect
 from core.config import settings
+import random
 
 from models import (
     AnnotationContribution,
@@ -142,13 +143,123 @@ class SampleDataService:
                     query = query.options(selectinload(getattr(model, rel.key)))
                     break
 
-        query = query.order_by(model.priority.desc(), func.random()).limit(limit)
+        fetch_limit = limit * 3
+        query = query.order_by(model.priority.desc()).limit(fetch_limit)
 
         result = await self.db.execute(query)
 
         if ids_only:
-            return [row[0] for row in result.fetchall()]
-        return list(result.scalars().all())
+            # Get more samples than needed, then randomly select from them
+            all_samples = [row[0] for row in result.fetchall()]
+            import random
+            random.shuffle(all_samples)  # Shuffle in place
+            samples = all_samples[:limit]  # Take only what we need
+        else:
+            all_samples = list(result.scalars().all())
+            import random
+            random.shuffle(all_samples)  # Shuffle in place
+            samples = all_samples[:limit]  # Take only what we need
+
+        # If no samples found, and we have a language_id, try to create samples from available seeds
+        if len(samples) == 0 and language_id and contribution_type in ["translation", "annotation"]:
+            new_samples = await self.create_samples_from_seeds(
+                contribution_type=contribution_type,
+                language_id=language_id,
+                limit=limit
+            )
+
+            if ids_only and new_samples:
+                return [sample.id for sample in new_samples]
+            return new_samples
+
+        return samples
+
+    async def create_samples_from_seeds(
+            self,
+            contribution_type: str,
+            language_id: uuid.UUID,
+            limit: int = 10
+    ) -> List:
+        """
+        Create samples using available seeds for a specific language
+
+        Args:
+            contribution_type: The type of contribution ('translation' or 'annotation')
+            language_id: The ID of the language to create samples for
+            limit: Maximum number of samples to create
+
+        Returns:
+            List of newly created samples
+        """
+        if contribution_type not in ["translation", "annotation"]:
+            return []
+
+        if contribution_type not in self.seed_types:
+            raise ValueError(f"No seed type defined for {contribution_type}")
+
+        seed_model = self.seed_types[contribution_type]
+        sample_model = self.sample_types[contribution_type]
+
+        # Find seeds that are not already used for this language
+        existing_samples_subquery = (
+            select(getattr(sample_model, "seed_data_id"))
+            .where(sample_model.language_id == language_id)
+            .subquery()
+        )
+
+        # Query for available seeds
+        seed_query = (
+            select(seed_model)
+            .where(seed_model.id.not_in(select(existing_samples_subquery.c.seed_data_id)))
+            .where(seed_model.active == False)
+            .order_by(func.random())
+            .limit(settings.Replenish_SAMPLES_LIMIT)
+        )
+
+        seed_result = await self.db.execute(seed_query)
+        seeds = list(seed_result.scalars().all())
+
+        if not seeds:
+            return []
+
+        # Create samples from the available seeds
+        new_samples = []
+        for seed in seeds:
+            if contribution_type == "translation":
+                sample = TranslationSample(
+                    seed_data_id=seed.id,
+                    language_id=language_id,
+                    source_text=seed.original_text,
+                    translation_text="",  # Empty as it will be filled by contributors
+                    category=seed.category,
+                    active=False,  # Not active until assigned
+                    priority=5,  # Default medium priority
+                    seed_count=0
+                )
+            elif contribution_type == "annotation":
+                sample = AnnotationSample(
+                    seed_data_id=seed.id,
+                    language_id=language_id,
+                    annotation_result="",  # Empty as it will be filled by contributors
+                    active=False,  # Not active until assigned
+                    priority=5,  # Default medium priority
+                    seed_count=0
+                )
+            else:
+                continue  # Skip if not a valid type
+
+            self.db.add(sample)
+            new_samples.append(sample)
+
+        await self.db.commit()
+
+        # Refresh all the samples to get their IDs and relationships
+        for sample in new_samples:
+            await self.db.refresh(sample)
+
+        random.shuffle(new_samples)
+
+        return new_samples[:limit]  # Return only the requested limit
 
     async def create_transcription_sample(
             self,
@@ -375,12 +486,12 @@ class SampleDataService:
             select(getattr(sample_class, "id"))
             .where(sample_class.id.not_in(select(user_contributed_subquery.c.sample_id)))
             .where(sample_class.active == False)
-            .where(sample_class.seed_count < width)
+            .where(sample_class.seed_count >= width)
             .where(sample_class.language_id == language_id)
         )
 
         result = await self.db.execute(query)
-        samples = result.scalars()
+        samples = result.scalars().all()
 
         if not result:
             raise ValueError(f"No available {contribution_type} samples found for user")
@@ -512,7 +623,7 @@ class SampleDataService:
     ) -> int:
         df = read_csv_upload(csv_file)
 
-        required_fields = ['image_url', 'seed_text', 'annotations']
+        required_fields = ['image_url', 'seed_text']
         if not all(field in df.columns for field in required_fields):
             raise ValueError("CSV must include 'image_url', 'seed_text', and 'annotations'.")
 
@@ -530,7 +641,6 @@ class SampleDataService:
             sample = AnnotationSample(
                 seed_data_id=seed_data.id,
                 language_id=language_id,
-                annotation_result=row['annotations'],
                 active=row.get('active', False)
             )
             self.db.add(sample)
@@ -544,7 +654,7 @@ class SampleDataService:
     ) -> int:
         df = read_csv_upload(csv_file)
 
-        required_fields = ['audio_urls', 'transcription_text']
+        required_fields = ['transcription_text']
         if not all(field in df.columns for field in required_fields):
             raise ValueError("CSV must include 'audio_urls' and 'transcription_text'.")
 
@@ -552,7 +662,6 @@ class SampleDataService:
         for _, row in df.iterrows():
             seed = TranscriptionSample(
                 language_id=language_id,
-                audio_urls=row['audio_urls'],  # Expecting comma-separated string
                 transcription_text=row['transcription_text'],
                 category=row.get('category'),
                 active=row.get('active', False)

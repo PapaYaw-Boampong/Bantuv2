@@ -52,6 +52,19 @@ async def update_user(
     }
 
 
+@router.get("/stats", response_model=Dict[str, Any])
+async def get_my_stats(
+        db: AsyncSession = Depends(get_session),
+        current_user: User = Depends(get_current_active_user)
+) -> Any:
+    """
+    Get current user's statistics
+    """
+    user_service = UserService(db)
+    stats = await user_service.get_user_stats(str(current_user.id))
+    return stats
+
+
 @router.get("/top-contributors", response_model=List[TopContributorResponse])
 async def get_top_contributors(
         time_period: Optional[int] = None,
@@ -71,21 +84,8 @@ async def get_top_contributors(
 
 
 # 🔹 Admin Endpoints
-@router.get("/{user_id}", response_model=UserProfileResponse)
-async def get_user_by_id(
-        user_id: str,
-        db: AsyncSession = Depends(get_session),
-        current_user: User = Depends(get_current_superuser)
-) -> Any:
-    """
-    Get user by ID (Admin only)
-    """
-    user_service = UserService(db)
-    profile = await user_service.get_detailed_user_by_id(user_id)
-    return profile
 
-
-@router.get("/users", response_model=UserProfileResponse)
+@router.get("/users", response_model=List[UserProfileResponse])
 async def get_user_by_id(
         db: AsyncSession = Depends(get_session),
         current_user: User = Depends(get_current_superuser)
@@ -94,7 +94,7 @@ async def get_user_by_id(
     Get user by ID (Admin only)
     """
     user_service = UserService(db)
-    profile = await user_service.get_users
+    profile = await user_service.get_all_profiles_detailed()
     return profile
 
 
@@ -110,3 +110,31 @@ async def deactivate_user(
     user_service = UserService(db)
     await user_service.deactivate_user(user_id)
     return {"success": True}
+
+
+@router.get("/{user_id}", response_model=UserProfileResponse)
+async def get_user_by_id(
+        user_id: str,
+        db: AsyncSession = Depends(get_session),
+        current_user: User = Depends(get_current_superuser)
+) -> Any:
+    """
+    Get user by ID (Admin only)
+    """
+    user_service = UserService(db)
+    profile = await user_service.get_detailed_user_by_id(user_id)
+    return profile
+
+
+@router.get("/{user_id}/stats", response_model=Dict[str, Any])
+async def get_user_stats(
+        user_id: str,
+        db: AsyncSession = Depends(get_session),
+        current_user: User = Depends(get_current_superuser)
+) -> Any:
+    """
+    Get a specific user's statistics (Admin only)
+    """
+    user_service = UserService(db)
+    stats = await user_service.get_user_stats(user_id)
+    return stats

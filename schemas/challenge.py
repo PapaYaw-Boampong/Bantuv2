@@ -83,7 +83,7 @@ class ChallengeParticipationCreate(BaseModel):
 class ParticipationUpdate(BaseModel):
     total_hours_speech: Optional[int] = 0
     total_sentences_translated: Optional[int] = 0
-    total_tokens_produced: Optional[int] = 0
+    total_annotation_tokens: Optional[int] = 0
 
     is_evaluation: Optional[bool] = False
     is_contribution: Optional[bool] = False

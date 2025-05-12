@@ -23,9 +23,9 @@ class Settings(BaseModel):
         "http://localhost:8000",  # FastAPI default
     ]
 
-    TRANSCRIPTION_BASE_WIDTH: int = 6
-    TRANSLATION_BASE_WIDTH: int = 3
-    ANNOTATION_BASE_WIDTH: int = 4
+    TRANSCRIPTION_BASE_WIDTH: int = 2
+    TRANSLATION_BASE_WIDTH: int = 2
+    ANNOTATION_BASE_WIDTH: int = 2
 
     TRANSCRIPTION_PIPE_DEPTH: int = 3
     TRANSLATION_PIPE_DEPTH: int = 3
@@ -35,6 +35,8 @@ class Settings(BaseModel):
 
     TTE: int = 30
     AB_TEST_MARGIN: int = 3
+
+    Replenish_SAMPLES_LIMIT: int = 30
 
     POINTS_PER_CONTRIBUTION: int = 10
     POINTS_PER_EVALUATION: int = 10

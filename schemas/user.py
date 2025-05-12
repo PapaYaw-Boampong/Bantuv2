@@ -115,7 +115,7 @@ class RegisterResponse(BaseModel):
 class UserProfileResponse(UserResponse):
     total_hours_speech: int
     total_sentences_translated: int
-    total_tokens_produced: int
+    total_annotation_tokens: int
 
     acceptance_rate: Optional[float] = None
     country: str = None
@@ -146,7 +146,7 @@ class UserStatisticsUpdate(BaseModel):
     transcription_reputation_score: Optional[float] = None
     total_hours_speech: Optional[int] = None
     total_sentences_translated: Optional[int] = None
-    total_tokens_produced: Optional[int] = None
+    total_annotation_tokens: Optional[int] = None
 
 
 # User Statistics Response Schema
@@ -160,7 +160,7 @@ class UserStatisticsResponse(BaseModel):
     transcription_reputation_score: float
     total_hours_speech: int
     total_sentences_translated: int
-    total_tokens_produced: int
+    total_annotation_tokens: int
     updated_at: datetime
 
     model_config = ConfigDict(from_attributes=True)

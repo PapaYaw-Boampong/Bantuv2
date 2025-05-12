@@ -13,12 +13,12 @@ from schemas.language import (
 )
 from services.language_service import LanguageService
 from api.v1.deps import get_current_active_user, get_current_superuser
+from pydantic import UUID4
 
 router = APIRouter()
 
 
 # -------------------- Language Routes --------------------
-
 @router.post(
     "/new",
     response_model=LanguageCreate,
@@ -49,7 +49,7 @@ async def update_language(
 ) -> Any:
     """Update a language (admin only)."""
     language_service = LanguageService(db)
-    return await language_service.update_language(language_id, language_in.model_dump())
+    return await language_service.update_language(UUID4(language_id), language_in.model_dump())
 
 
 @router.put(
@@ -162,3 +162,20 @@ async def delete_user_language(
     """Delete user-language relationship."""
     language_service = LanguageService(db)
     await language_service.remove_user_language(user_language_id)
+
+
+@router.get(
+    "/userlanguages/{user_language_id}/stats",
+    response_model=List[dict],
+    summary="Get statistics for a user-language relationship"
+)
+async def get_user_language_stats(
+        db: AsyncSession = Depends(get_session),
+        user_language_id: str = Path(...),
+        current_user: User = Depends(get_current_active_user)
+) -> Any:
+    """Get detailed statistics for a user-language relationship."""
+    language_service = LanguageService(db)
+    return await language_service.user_language_stats_repository.get_user_language_stats(user_language_id)
+
+

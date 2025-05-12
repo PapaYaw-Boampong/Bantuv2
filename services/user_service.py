@@ -5,6 +5,8 @@ from crud.user import UserCrud
 from models.user import User
 from services.token_service import TokenService, verify_password, get_password_hash
 from sqlmodel import select
+from datetime import datetime
+from schemas.language import UserLanguageStatsUpdate
 
 
 async def get_user_profile(
@@ -150,3 +152,62 @@ class UserService:
         await self.db.delete(user)
         await self.db.commit()
         return True
+
+    async def update_user_stats(
+            self,
+            user_id: str,
+            stats_data: UserLanguageStatsUpdate
+    ) -> User:
+
+        user = await self.get_detailed_user_by_id(user_id)
+        if not user:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="User not found"
+            )
+
+        # Update general statistics
+        user.total_hours_speech += stats_data.total_hours_speech
+        user.total_sentences_translated += stats_data.total_sentences_translated
+        user.total_annotation_tokens += stats_data.total_annotation_tokens
+
+        # Update user's timestamp
+        user.updated_at = datetime.utcnow()
+
+        # Save changes
+        self.db.add(user)
+        await self.db.commit()
+        await self.db.refresh(user)
+
+        return user
+
+    async def get_user_stats(self, user_id: str) -> Dict[str, Any]:
+        """
+        Get all statistics for a specific user
+
+        Args:
+            user_id: The ID of the user
+
+        Returns:
+            Dictionary containing user statistics
+        """
+        user = await self.get_detailed_user_by_id(user_id)
+        if not user:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="User not found"
+            )
+
+        # Get the base stats from the user object
+        stats = {
+            "user_id": str(user.id),
+            "username": user.username,
+            "general_statistics": {
+                "total_hours_speech": user.total_hours_speech,
+                "total_sentences_translated": user.total_sentences_translated,
+                "total_annotation_tokens": user.total_annotation_tokens,
+            },
+            "updated_at": user.updated_at.isoformat()
+        }
+
+        return stats

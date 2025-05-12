@@ -77,8 +77,8 @@ class EvaluationStep(SQLModel, table=True):
     __tablename__ = "evaluation_step"
     id: uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True)
     branch_id: uuid.UUID = Field(foreign_key="evaluation_branch.id")
-    user_id: uuid.UUID = Field(foreign_key="user.id")
-    b_contribution_id: uuid.UUID # Best contribution so far
+    user_id: uuid.UUID = Field(foreign_key="user.id", nullable=True)
+    b_contribution_id: uuid.UUID
     head: bool = Field(default=False)
     assigned_at: Optional[datetime] = Field(default_factory=None)
     step_number: int = Field(default=1)
@@ -89,9 +89,9 @@ class EvaluationStep(SQLModel, table=True):
 
     run_ab_test: bool = Field(default=False)  # Flag to indicate if AB test should be run
 
-    a_contribution_id: Optional[uuid.UUID] = Field(default=None)  # Alternative contribution from previous step
+    a_contribution_id: Optional[uuid.UUID] = Field(default=None, nullable=True)  # Alternative contribution from previous step
 
-    next_alt_contribution_id: Optional[uuid.UUID] = Field(default=None)
+    next_alt_contribution_id: Optional[uuid.UUID] = Field(default=None, nullable=True)  # Next alternative contribution ID
 
     evaluation_branch: "EvaluationBranch" = Relationship(back_populates="evaluation_steps")
     user: Optional["User"] = Relationship(back_populates="evaluation_steps")

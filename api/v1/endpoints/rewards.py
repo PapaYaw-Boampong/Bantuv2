@@ -2,7 +2,7 @@ from typing import List, Optional
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 import uuid
-
+from pydantic import UUID4
 from api.v1.deps import get_session, get_current_active_user, get_current_superuser
 from models.user import User
 
@@ -23,7 +23,7 @@ router = APIRouter()
 
 
 # Milestone endpoints
-@router.post("/milestones/", response_model=MilestoneResponse, status_code=status.HTTP_201_CREATED)
+@router.post("/milestones", response_model=MilestoneResponse, status_code=status.HTTP_201_CREATED)
 async def create_milestone(
         milestone_data: MilestoneCreate,
         db: AsyncSession = Depends(get_session),
@@ -40,7 +40,7 @@ async def create_milestone(
         )
 
 
-@router.get("/milestones/", response_model=List[MilestoneResponse])
+@router.get("/milestones", response_model=List[MilestoneResponse])
 async def list_milestones(
         db: AsyncSession = Depends(get_session),
         current_user: User = Depends(get_current_active_user)
@@ -94,7 +94,7 @@ async def delete_milestone(
 ):
     """Delete a milestone (admin only)"""
     rewards_service = RewardsService(db)
-    success = await rewards_service.delete_milestone(milestone_id)
+    success = await rewards_service.delete_milestone(UUID4(milestone_id))
     if not success:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -177,35 +177,6 @@ async def get_challenge_reward(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Reward not found")
     return reward
 
-
-# Update a challenge reward
-# @router.put("/rewards/{reward_id}", response_model=ChallengeReward)
-# async def update_challenge_reward(
-#         reward_id: str,
-#         reward_data: ChallengeRewardUpdate,
-#         db: AsyncSession = Depends(get_session),
-#         current_user: User = Depends(get_current_active_user)
-# ):
-#     rewards_service = RewardsService(db)
-#     reward = await rewards_service.update_challenge_reward(reward_id, reward_data)
-#     if not reward:
-#         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Reward not found")
-#     return reward
-#
-
-# Delete a challenge reward
-# @router.delete("/rewards/{reward_id}", status_code=status.HTTP_204_NO_CONTENT)
-# async def delete_challenge_reward(
-#         reward_id: str,
-#         db: AsyncSession = Depends(get_session),
-#         current_user: User = Depends(get_current_superuser)
-# ):
-#     rewards_service = RewardsService(db)
-#     success = await rewards_service.delete_challenge_reward(reward_id)
-#     if not success:
-#         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Reward not found")
-#     return None
-#
 
 # List challenge rewards
 @router.get("/rewards", response_model=List[ChallengeReward])

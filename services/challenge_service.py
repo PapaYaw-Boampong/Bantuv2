@@ -416,7 +416,7 @@ class ChallengeService:
 
         participation.total_hours_speech += hours
         participation.total_sentences_translated += sentences
-        participation.total_tokens_produced += tokens
+        participation.total_annotation_tokens += tokens
 
         participation.updated_at = datetime.utcnow()
 
@@ -439,7 +439,7 @@ class ChallengeService:
             participation,
             hours=stats_data.total_hours_speech,
             sentences=stats_data.total_sentences_translated,
-            tokens=stats_data.total_tokens_produced,
+            tokens=stats_data.total_annotation_tokens,
             is_contribution=stats_data.is_contribution,
             is_evaluation=stats_data.is_evaluation,
             is_ab_test=stats_data.is_ab_test,
@@ -519,7 +519,7 @@ class ChallengeService:
                 "points": participation.total_points,
                 "hours_speech": participation.total_hours_speech,
                 "sentences_translated": participation.total_sentences_translated,
-                "tokens_produced": participation.total_tokens_produced,
+                "tokens_produced": participation.total_annotation_tokens,
                 "contribution_acceptance_rate": participation.contribution_acceptance_score,
                 "evaluation_acceptance_rate": participation.evaluation_acceptance_score,
             })
@@ -597,7 +597,7 @@ class ChallengeService:
             evaluation_acceptance_score=participation.evaluation_acceptance_score,
             total_hours_speech=participation.total_hours_speech,
             total_sentences_translated=participation.total_sentences_translated,
-            total_tokens_produced=participation.total_tokens_produced,
+            total_annotation_tokens=participation.total_annotation_tokens,
             created_at=participation.created_at,
             updated_at=participation.updated_at,
         )
@@ -653,7 +653,7 @@ class ChallengeService:
                 func.avg(ChallengeParticipation.evaluation_acceptance_score).label("avg_evaluation_acceptance"),
                 func.sum(ChallengeParticipation.total_hours_speech).label("total_hours_speech"),
                 func.sum(ChallengeParticipation.total_sentences_translated).label("total_sentences_translated"),
-                func.sum(ChallengeParticipation.total_tokens_produced).label("total_tokens_produced"),
+                func.sum(ChallengeParticipation.total_annotation_tokens).label("total_annotation_tokens"),
             )
             .where(ChallengeParticipation.event_id == challenge_id)
         )
@@ -673,6 +673,6 @@ class ChallengeService:
             avg_evaluation_acceptance=float(row.avg_evaluation_acceptance or 0),
             total_hours_speech=int(row.total_hours_speech or 0),
             total_sentences_translated=int(row.total_sentences_translated or 0),
-            total_tokens_produced=int(row.total_tokens_produced or 0),
+            total_annotation_tokens=int(row.total_annotation_tokens or 0),
             completion_percent=None,  # You can calculate this from a challenge goal table if needed
         )
