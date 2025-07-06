@@ -1,7 +1,7 @@
 
 from typing import Optional, List, TYPE_CHECKING
-from datetime import datetime, timedelta
-from sqlmodel import Field, SQLModel, Relationship
+from datetime import datetime, timedelta, timezone
+from sqlmodel import Field, SQLModel, Relationship, Column,DateTime
 import secrets
 import uuid
 
@@ -31,22 +31,37 @@ class RefreshToken(SQLModel, table=True):
     ip_address: Optional[str] = None
 
     # Token usage and rotation tracking
-    last_used_at: datetime = Field(default_factory=datetime.utcnow)
-    issued_at: datetime = Field(default_factory=datetime.utcnow)
-    expires_at: datetime
+    last_used_at: datetime = Field(
+        default_factory=lambda: datetime.now(timezone.utc),
+        sa_column=Column(DateTime(timezone=True), nullable=False),
+    )
+    issued_at: datetime = Field(
+        default_factory=lambda: datetime.now(timezone.utc),
+        sa_column=Column(DateTime(timezone=True), nullable=False),
+    )
+    expires_at: datetime = Field(
+        default=None,
+        sa_column=Column(DateTime(timezone=True), nullable=False),
+    )
+    
     rotations_count: int = Field(default=0)
 
     # Status flags
     is_revoked: bool = Field(default=False)
-    revoked_at: Optional[datetime] = None
+
+    revoked_at: Optional[datetime] = Field(
+        default=None,
+        sa_column=Column(DateTime(timezone=True))
+    )
+
     revoked_reason: Optional[str] = None
 
     @property
     def is_expired(self) -> bool:
-        return datetime.utcnow() > self.expires_at
+        return datetime.now(timezone.utc) > self.expires_at
 
     @property
     def needs_rotation(self) -> bool:
         # Rotate after 7 days or 5 uses, whichever comes first
-        seven_days_ago = datetime.utcnow() - timedelta(days=7)
+        seven_days_ago = datetime.now(timezone.utc) - timedelta(days=7)
         return (self.issued_at < seven_days_ago) or (self.rotations_count >= 5)

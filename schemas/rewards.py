@@ -1,5 +1,5 @@
 from typing import Optional, List
-from datetime import datetime
+from datetime import datetime, timezone
 from pydantic import BaseModel, ConfigDict, UUID4
 from models.rewards import RewardType, RewardDistributionType
 
@@ -77,7 +77,9 @@ class UserChallengeRewardCreate(BaseModel):
     reward_id: UUID4
     challenge_id: UUID4
     rank: int
-    awarded_at: datetime = datetime.utcnow()
+    awarded_at: datetime = datetime.now(timezone.utc)
+    type: Optional[RewardType] = None
+    rank: Optional[int] = 1
 
 
 class UserChallengeRewardResponse(BaseModel):

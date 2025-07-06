@@ -7,7 +7,12 @@ from sqlalchemy import select, update, func, and_
 from sqlalchemy.orm import selectinload
 from sqlalchemy.inspection import inspect
 from core.config import settings
+from services.storage_service import StorageService
 import random
+import tempfile
+import zipfile
+import os
+import time
 
 from models import (
     AnnotationContribution,
@@ -26,7 +31,8 @@ from schemas.sample_data import (
     TranslationSeedCreate,
     TranslationSampleCreate,
     AnnotationSeedCreate,
-    AnnotationSampleCreate
+    AnnotationSampleCreate,
+    AnnotationSampleOut
 )
 
 import pandas as pd
@@ -90,6 +96,7 @@ class SampleDataService:
             ids_only: bool = False,
             include_seed_data: bool = False,
             user_id: Optional[uuid.UUID] = None,
+            buffer: List[uuid.UUID] = []
     ) -> List:
         """Generic sample fetcher with optional ID-only mode and priority-based selection"""
 
@@ -107,7 +114,7 @@ class SampleDataService:
             }.get(contribution_type, settings.DEFAULT_BASE_WIDTH)
 
             base_conditions = [
-                model.active == active,
+                model.eval == active,
                 model.priority >= priority_threshold,
                 model.seed_count < max_instance_width,
             ]
@@ -127,6 +134,7 @@ class SampleDataService:
         # Construct the query excluding samples the user has already contributed to
         query = select(model).where(and_(*base_conditions))
         query = query.where(model.id.not_in(select(user_contributed_subquery.c.sample_id)))
+        query = query.where(model.id.not_in(buffer))
 
         # Select only IDs if requested
         if ids_only:
@@ -162,17 +170,19 @@ class SampleDataService:
 
         # If no samples found, and we have a language_id, try to create samples from available seeds
         if len(samples) == 0 and language_id and contribution_type in ["translation", "annotation"]:
-            new_samples = await self.create_samples_from_seeds(
+
+            samples = await self.create_samples_from_seeds(
                 contribution_type=contribution_type,
                 language_id=language_id,
                 limit=limit
             )
 
-            if ids_only and new_samples:
-                return [sample.id for sample in new_samples]
-            return new_samples
-
-        return samples
+            if ids_only and samples:
+                return [sample.id for sample in samples]
+    
+        result = samples
+        
+        return result
 
     async def create_samples_from_seeds(
             self,
@@ -229,10 +239,7 @@ class SampleDataService:
                 sample = TranslationSample(
                     seed_data_id=seed.id,
                     language_id=language_id,
-                    source_text=seed.original_text,
-                    translation_text="",  # Empty as it will be filled by contributors
-                    category=seed.category,
-                    active=False,  # Not active until assigned
+                    eval=False,  # Not active until assigned
                     priority=5,  # Default medium priority
                     seed_count=0
                 )
@@ -240,10 +247,10 @@ class SampleDataService:
                 sample = AnnotationSample(
                     seed_data_id=seed.id,
                     language_id=language_id,
-                    annotation_result="",  # Empty as it will be filled by contributors
-                    active=False,  # Not active until assigned
+                    eval=False,  # Not active until assigned
                     priority=5,  # Default medium priority
-                    seed_count=0
+                    seed_count=0,
+                    file_name=seed.file_name
                 )
             else:
                 continue  # Skip if not a valid type
@@ -277,7 +284,8 @@ class SampleDataService:
             language_id: Optional[uuid.UUID] = None,
             limit: int = 10,
             priority_threshold: int = 0,
-            user_id: Optional[uuid.UUID] = None
+            user_id: Optional[uuid.UUID] = None,
+            currently_buffered: List[uuid.UUID] = []
     ) -> List[TranscriptionSample]:
         """Get transcription samples with priority-based selection"""
         return await self.get_samples(
@@ -287,7 +295,8 @@ class SampleDataService:
             limit,
             priority_threshold,
             include_seed_data=True,
-            user_id=user_id
+            user_id=user_id,
+            buffer=currently_buffered
         )
 
     # --- Translation Samples ---
@@ -319,7 +328,9 @@ class SampleDataService:
             language_id: Optional[uuid.UUID] = None,
             limit: int = 10,
             priority_threshold: int = 0,
-            user_id: Optional[uuid.UUID] = None
+            user_id: Optional[uuid.UUID] = None,
+            currently_buffered: List[uuid.UUID] = []
+
     ) -> List[TranslationSample]:
         """Get translation samples with priority-based selection"""
         return await self.get_samples(
@@ -329,7 +340,8 @@ class SampleDataService:
             limit,
             priority_threshold,
             include_seed_data=True,
-            user_id=user_id
+            user_id=user_id,
+            buffer= currently_buffered 
         )
 
     # --- Annotation Samples ---
@@ -361,18 +373,66 @@ class SampleDataService:
             language_id: Optional[uuid.UUID] = None,
             limit: int = 10,
             priority_threshold: int = 0,
-            user_id: Optional[uuid.UUID] = None
-    ) -> List[AnnotationSample]:
+            user_id: Optional[uuid.UUID] = None,
+            currently_buffered: List[uuid.UUID] = []
+    ) -> List[AnnotationSampleOut]:
         """Get annotation samples with priority-based selection"""
-        return await self.get_samples(
+        orm_samples =  await self.get_samples(
             AnnotationSample,
             "annotation",
             language_id,
             limit,
             priority_threshold,
             include_seed_data=True,
-            user_id=user_id
+            user_id=user_id,
+            buffer=currently_buffered
         )
+
+        storage = StorageService()
+
+        output = []
+        for sample in orm_samples:
+            sample_out = AnnotationSampleOut.model_validate(sample)
+
+            if sample_out.annotation_seed_data and sample_out.annotation_seed_data.file_name:
+                try:
+                    sample_out.annotation_seed_data.signed_url = storage.generate_download_url(
+                        sample_out.annotation_seed_data.file_name
+                    )
+                except Exception:
+                    sample_out.annotation_seed_data.signed_url = None
+
+            output.append(sample_out)
+
+        return output
+
+    async def get_selected_seed_fields(
+        self,
+        seed_ids: Optional[List[uuid.UUID]] = None,
+        fields: Optional[List[str]] = None,
+    ) -> List[dict]:
+        """
+        Retrieve selected fields from AnnotationSeedData records.
+
+        Args:
+            seed_ids: List of seed UUIDs to filter by.
+            fields: List of fields to include. Defaults to a safe subset.
+            active_only: If True, filters only active seeds.
+
+        Returns:
+            A list of dictionaries with selected field values.
+        """
+        default_fields = ["id", "file_name", "annotation_text", "category"]
+        selected_fields = fields or default_fields
+
+        stmt = select(*[getattr(AnnotationSeedData, f) for f in selected_fields])
+
+        stmt = stmt.where(AnnotationSeedData.id.in_(seed_ids))
+
+        result = await self.db.execute(stmt)
+        return [dict(row._mapping) for row in result.fetchall()]
+
+
 
     # --- Sample Assignment & updates---
     async def assign_user_to_sample(
@@ -380,10 +440,18 @@ class SampleDataService:
             language_id: uuid.UUID,
             user_id: uuid.UUID,
             sample_type: str,
-            limit: int = 3
+            limit: int = 3,
+            buffered_samples: List[uuid.UUID] = []
     ) -> List[Dict[str, Any]]:
 
-        sample_ids = await self.find_samples_for_user(language_id, sample_type, user_id, limit)
+        sample_ids = await self.find_samples_for_user(
+            language_id=language_id,
+            contribution_type=sample_type,
+            user_id=user_id,
+            limit=limit,
+            evaluation_mode=False,
+            active_samples= buffered_samples
+            )
 
         if not sample_ids:
             return []
@@ -409,7 +477,9 @@ class SampleDataService:
         samples = result.scalars().all()
 
         structured_samples = [{"TTE": settings.TTE}]
+
         for sample in samples:
+            
             if sample_type == "transcription":
                 structured_samples.append({
                     "id": str(sample.id),
@@ -442,8 +512,6 @@ class SampleDataService:
                     "sample_type": "annotation"
                 })
 
-        await self.lock_samples(sample_ids, sample_type)
-
         return structured_samples
 
     async def find_samples_for_user(
@@ -451,8 +519,9 @@ class SampleDataService:
             user_id: uuid.UUID,
             contribution_type: str,
             language_id: uuid.UUID,
-            limit: int = 1
-
+            limit: int = 1,
+            evaluation_mode: bool = False,
+            active_samples: List[uuid.UUID] = []
     ) -> List[uuid.UUID]:
         """
             Assign a sample to a user for contribution
@@ -481,14 +550,24 @@ class SampleDataService:
             .subquery()
         )
 
-        # Select a sample that hasn't been contributed to by this user
+
+        # Select a sample that hasn't been contributed to by this user and dont have existing instances
         query = (
             select(getattr(sample_class, "id"))
             .where(sample_class.id.not_in(select(user_contributed_subquery.c.sample_id)))
-            .where(sample_class.active == False)
-            .where(sample_class.seed_count >= width)
+            
+             .where(sample_class.id.not_in(active_samples))
+             .where(sample_class.eval == evaluation_mode)
             .where(sample_class.language_id == language_id)
         )
+
+        if evaluation_mode:
+            query = query.where(sample_class.seed_count >= width)
+            query = query.where(sample_class.evaluation_instance_id.is_not(None))
+        
+        else:
+            query = query.where(sample_class.seed_count < width)
+            query = query.where(sample_class.evaluation_instance_id.is_(None))
 
         result = await self.db.execute(query)
         samples = result.scalars().all()
@@ -525,6 +604,10 @@ class SampleDataService:
 
         sample.seed_count += 1
 
+        if sample.seed_count >= settings.EVAL_INSTANCE_WIDTH:
+            sample.eval = True
+
+
         self.db.add(sample)
         await self.db.commit()
         await self.db.refresh(sample)
@@ -540,15 +623,15 @@ class SampleDataService:
         if sample_type == "transcription":
             stmt = update(TranscriptionSample).where(
                 TranscriptionSample.id.in_(sample_ids)
-            ).values(active=state)
+            ).values(eval=state)
         elif sample_type == "translation":
             stmt = update(TranslationSample).where(
                 TranslationSample.id.in_(sample_ids)
-            ).values(active=state)
+            ).values(eval=state)
         elif sample_type == "annotation":
             stmt = update(AnnotationSample).where(
                 AnnotationSample.id.in_(sample_ids)
-            ).values(active=state)
+            ).values(eval=state)
         else:
             raise ValueError(f"Unsupported sample type: {sample_type}")
 
@@ -617,7 +700,7 @@ class SampleDataService:
     # --- Custom Contributions ---
 
     # csv enabled functions
-
+    # keep pure, manually upload to gcp flicker 30k
     async def bulk_create_annotation_seeds_from_csv(
             self, csv_file: UploadFile, language_id: uuid.UUID
     ) -> int:
@@ -641,13 +724,108 @@ class SampleDataService:
             sample = AnnotationSample(
                 seed_data_id=seed_data.id,
                 language_id=language_id,
-                active=row.get('active', False)
+                eval=row.get('eval', False)
             )
             self.db.add(sample)
             seeds.append(sample)
 
         await self.db.commit()
         return len(seeds)
+
+
+    async def bulk_upload_annotation_seeds(
+        self,
+        captions_file: UploadFile,
+        images_zip: UploadFile,
+    ) -> dict:
+        count = 0
+        failed_uploads = []
+        duplicate_files = set()
+        seen_filenames = set()
+
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            # === Extract ZIP ===
+            zip_path = os.path.join(tmp_dir, images_zip.filename)
+            with open(zip_path, "wb") as f:
+                f.write(await images_zip.read())
+
+            with zipfile.ZipFile(zip_path, "r") as zip_ref:
+                zip_ref.extractall(tmp_dir)
+
+            # === Build lookup map for image filenames (case-insensitive, full tree) ===
+            image_lookup = {}
+            for root, _, files in os.walk(tmp_dir):
+                for fname in files:
+                    image_lookup[fname.strip().lower()] = os.path.join(root, fname)
+
+            # === Parse CSV ===
+            content = (await captions_file.read()).decode("utf-8")
+            rows = content.strip().split("\n")
+
+            for row in rows:
+                if "\t" not in row:
+                    continue
+
+                try:
+                    image_id_full, caption, source = row.strip().split("\t")
+                    image_filename = image_id_full.split("#")[0]
+
+                    if image_filename in seen_filenames:
+                        duplicate_files.add(image_filename)
+                        continue  # Avoid duplicate image names in one upload
+
+                    seen_filenames.add(image_filename)
+
+                    # Use lookup map
+                    local_image_path = image_lookup.get(image_filename)
+
+                    if not local_image_path or not os.path.exists(local_image_path):
+                        failed_uploads.append({
+                            "filename": image_filename,
+                            "reason": "Image not found in ZIP"
+                        })
+                        continue
+
+                    # === Upload Image ===
+                    seed_id = str(uuid.uuid4())
+                    timestamp = int(time.time())
+                    gcs_path = f"contributions/annotation/{seed_id}/{timestamp}.jpg"
+
+                    try:
+                        storage = StorageService()
+                        storage.upload_local_file(local_image_path, gcs_path)
+                    except Exception as e:
+                        failed_uploads.append({"filename": image_filename, "reason": f"GCS upload failed: {str(e)}"})
+                        continue
+
+                    # === Create DB Record ===
+                    try:
+                        sample = AnnotationSeedData(
+                            id=seed_id,
+                            file_name=gcs_path,
+                            annotation_text=caption,
+                            source=source
+                        )
+
+                        self.db.add(sample)
+                        count += 1
+                    except Exception as e:
+                        failed_uploads.append({"filename": image_filename, "reason": f"DB error: {str(e)}"})
+                        continue
+
+                except ValueError:
+                    failed_uploads.append({"filename": row, "reason": "Invalid row format (expected 3 columns)"})
+                    continue
+
+            await self.db.commit()
+
+        return {
+            "success": True,
+            "inserted": count,
+            "duplicates": list(duplicate_files),
+            "failed": failed_uploads
+        }
+
 
     async def bulk_create_transcription_seeds_from_csv(
             self, csv_file: UploadFile, language_id: uuid.UUID
@@ -664,7 +842,7 @@ class SampleDataService:
                 language_id=language_id,
                 transcription_text=row['transcription_text'],
                 category=row.get('category'),
-                active=row.get('active', False)
+                eval=row.get('eval', False)
             )
             self.db.add(seed)
             seeds.append(seed)

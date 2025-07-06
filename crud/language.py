@@ -5,7 +5,7 @@ from models.language import Language
 from models.user import UserLanguage, UserLanguageStats
 from schemas.language import UserLanguageStatsUpdate
 from sqlalchemy.ext.asyncio import AsyncSession
-from datetime import datetime
+from datetime import datetime, timezone
 from uuid import UUID
 from fastapi import HTTPException, status
 from services.user_service import UserService
@@ -195,43 +195,6 @@ class UserLanguageCrud:
         await self.db.commit()
         return True
 
-    async def update_stats(
-            self,
-            user_language: UserLanguage,
-            hours: int = 0,
-            sentences: int = 0,
-            tokens: int = 0,
-    ) -> UserLanguage:
-        user_language.total_hours_speech += hours
-        user_language.total_sentences_translated += sentences
-        user_language.total_annotation_tokens += tokens
-
-        await self.db.commit()
-        await self.db.refresh(user_language)
-        return user_language
-
-    # async def update_language_stats(
-    #         self,
-    #         language_id: UUID,
-    #         user_id: UUID,
-    #         stats_data: dict
-    # ) -> Optional[UserLanguage]:
-    #
-    #     user_language = await self.get_by_user_and_language(user_id, language_id)
-    #
-    #     if not user_language:
-    #         raise ValueError("UserLanguage not found")
-    #
-    #     hours = getattr(stats_data, "hours", 0)
-    #     sentences = getattr(stats_data, "sentences", 0)
-    #     tokens = getattr(stats_data, "tokens", 0)
-    #
-    #     return await self.update_stats(
-    #         user_language,
-    #         hours=hours,
-    #         sentences=sentences,
-    #         tokens=tokens
-    #     )
 
 
 class UserLanguageStatsCrud:
@@ -297,7 +260,7 @@ class UserLanguageStatsCrud:
         await self.db.refresh(user_language_stats)
         return user_language_stats
 
-    async def update_stats(
+    async def update_language_stats(
             self,
             user_language_stats: UserLanguageStats,
             stats_data: UserLanguageStatsUpdate = None,
@@ -311,13 +274,13 @@ class UserLanguageStatsCrud:
         user_language_stats.total_sentences_translated += stats_data.total_sentences_translated
         user_language_stats.total_annotation_tokens += stats_data.total_annotation_tokens
 
-        user_language_stats.updated_at = datetime.utcnow()
+        user_language_stats.updated_at = datetime.now(timezone.utc)
 
         await self.db.commit()
         await self.db.refresh(user_language_stats)
         return user_language_stats
 
-    async def update_language_stats(
+    async def update_stats(
             self,
             language_id: UUID,
             user_id: UUID,
@@ -336,11 +299,12 @@ class UserLanguageStatsCrud:
                 "task_type": task_type,
                 "proficiency": PROFICIENCY_LEVELS.get(user_language.proficiency, 3.0),
             })
-
+        # updating global user non-language-specific statistics  
         us = UserService(self.db)
         await us.update_user_stats(str(user_id), stats_data)
 
-        return await self.update_stats(
+        # updating language-specific statistics 
+        return await self.update_language_stats(
             user_language_stats,
             stats_data=stats_data
         )
@@ -383,8 +347,7 @@ class UserLanguageStatsCrud:
                                                                        user_language_stats.evaluation_acceptance_score * user_language_stats.eval_score_counter) + acceptance_score) / (
                                                                       user_language_stats.eval_score_counter + 1)
 
-        # Common updates for both roles
-        user_language_stats.updated_at = datetime.utcnow()
+        user_language_stats.updated_at = datetime.now(timezone.utc)
 
         await self.db.commit()
         await self.db.refresh(user_language_stats)
@@ -444,3 +407,4 @@ class UserLanguageStatsCrud:
         )
         result = await self.db.execute(statement)
         return list(result.scalars().all())
+

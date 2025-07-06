@@ -165,11 +165,6 @@ async def join_challenge(
         raise HTTPException(status_code=400, detail=str(e))
 
 
-# ==========================================
-# ROUTES WITH PATH PARAMETERS (less specific)
-# These should come after fixed path routes
-# ==========================================
-
 @router.get("/single/{challenge_id}", response_model=Challenge)
 async def get_challenge(
         challenge_id: str = Path(..., description="The ID of the challenge to get"),

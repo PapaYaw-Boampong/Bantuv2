@@ -130,7 +130,7 @@ async def assign_language_to_user(
     """Assign a language to a user."""
     language_service = LanguageService(db)
     return await language_service.add_user_language(
-        str(current_user.id),
+        current_user.id,
         user_language_in.language_id,
         user_language_in.proficiency)
 

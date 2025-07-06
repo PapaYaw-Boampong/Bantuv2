@@ -1,7 +1,7 @@
 import uuid
 from typing import TYPE_CHECKING, List, Optional, Dict, Any
-from sqlmodel import SQLModel, Field, Relationship, Column, JSON
-from datetime import datetime
+from sqlmodel import SQLModel, Field, Relationship, Column, JSON, DateTime
+from datetime import datetime, timezone, timedelta
 from sqlalchemy.dialects.postgresql import JSONB
 
 if TYPE_CHECKING:
@@ -13,28 +13,31 @@ if TYPE_CHECKING:
 class EvaluationInstance(SQLModel, table=True):
     __tablename__ = "evaluation_instance"
     id: uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True)
-    num_branches: int = 3
+    num_branches: int = Field(default=2)
     challenge_id: uuid.UUID = Field(foreign_key="challenge.id", nullable=True)
     is_complete: bool = False
 
+    ancestors: List[str] = Field(
+        sa_column=Column(JSON),
+        default_factory=dict
+    )
+
+
     transcription_sample: Optional["TranscriptionSample"] = Relationship(
         back_populates="evaluation_instance",
-        sa_relationship_kwargs={"lazy": "selectin"}
     )
     translation_sample: Optional["TranslationSample"] = Relationship(
         back_populates="evaluation_instance",
-        sa_relationship_kwargs={"lazy": "selectin"}
     )
     annotation_sample: Optional["AnnotationSample"] = Relationship(
         back_populates="evaluation_instance",
-        sa_relationship_kwargs={"lazy": "selectin"}
     )
 
     ab_test: Optional["ABTest"] = Relationship(
         back_populates="evaluation_instance",
         sa_relationship_kwargs={
             "uselist": False,
-            "cascade": "all, delete-orphan",
+            "cascade": "all, delete",
             "lazy": "selectin"
         }
     )
@@ -57,17 +60,20 @@ class EvaluationBranch(SQLModel, table=True):
     id: uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True)
     instance_id: uuid.UUID = Field(foreign_key="evaluation_instance.id")
     current_contribution_id: uuid.UUID
-    depth: int = 0
+    depth: int = 1
     max_depth: int = 5
     is_complete: bool = Field(default=False)
 
     evaluation_instance: "EvaluationInstance" = Relationship(
-        back_populates="evaluation_branches"
+        back_populates="evaluation_branches",
+         sa_relationship_kwargs={
+            "lazy": "selectin"
+        }
     )
     evaluation_steps: List["EvaluationStep"] = Relationship(
         back_populates="evaluation_branch",
         sa_relationship_kwargs={
-            "cascade": "all, delete-orphan",
+            "cascade": "all, delete",
             "lazy": "selectin"
         }
     )
@@ -80,11 +86,18 @@ class EvaluationStep(SQLModel, table=True):
     user_id: uuid.UUID = Field(foreign_key="user.id", nullable=True)
     b_contribution_id: uuid.UUID
     head: bool = Field(default=False)
-    assigned_at: Optional[datetime] = Field(default_factory=None)
+
+    assigned_at: Optional[datetime] = Field(
+        default=None,
+        sa_column=Column(DateTime(timezone=True))
+    )
+
     step_number: int = Field(default=1)
+
     is_complete: bool = Field(default=False)
 
     abtest_decision: Optional[str] = Field(default=None)
+
     evaluation_decision: Optional[bool] = Field(default=None)
 
     run_ab_test: bool = Field(default=False)  # Flag to indicate if AB test should be run
@@ -94,6 +107,7 @@ class EvaluationStep(SQLModel, table=True):
     next_alt_contribution_id: Optional[uuid.UUID] = Field(default=None, nullable=True)  # Next alternative contribution ID
 
     evaluation_branch: "EvaluationBranch" = Relationship(back_populates="evaluation_steps")
+
     user: Optional["User"] = Relationship(back_populates="evaluation_steps")
 
 
@@ -112,8 +126,15 @@ class ABTest(SQLModel, table=True):
     test_depth: int = Field(default=0)
     current_stage: int = Field(default=0)  # Track the current active stage
 
-    created_at: datetime = Field(default_factory=datetime.utcnow)
-    completed_at: Optional[datetime] = None
+    created_at: datetime =  Field(
+        default_factory=lambda: datetime.now(timezone.utc) + timedelta(days=30),
+        sa_column=Column(DateTime(timezone=True), nullable=False),
+    )
+
+    completed_at: Optional[datetime] = Field(
+        default=None,
+        sa_column=Column(DateTime(timezone=True))
+    )
 
     # Enhanced data structure for storing test metadata
     ab_test_data: Optional[dict] = Field(default=None, sa_column=Column(JSONB))  # Using JSONB for better querying
@@ -132,10 +153,10 @@ class ABTestPair(SQLModel, table=True):
     id: uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True)
 
     ab_test_id: uuid.UUID = Field(foreign_key="ab_test.id")
-    stage_number: int  # Stage in the tournament
+    stage_number: int  = Field (default=0)
 
-    contribution_a_id: uuid.UUID
-    contribution_b_id: uuid.UUID
+    contribution_a_id: uuid.UUID = Field (default_factory=uuid.uuid4)
+    contribution_b_id: uuid.UUID = Field (default_factory=uuid.uuid4)
     is_complete: bool = Field(default=False)
     is_tie: bool = Field(default=False)  # Flag for tracking ties
 
@@ -144,8 +165,14 @@ class ABTestPair(SQLModel, table=True):
         default_factory=list
     )  # Store the winner directly
 
-    created_at: datetime = Field(default_factory=datetime.utcnow)
-    updated_at: datetime = Field(default_factory=datetime.utcnow)
+    created_at: datetime =  Field(
+        default_factory=lambda: datetime.now(timezone.utc) + timedelta(days=30),
+        sa_column=Column(DateTime(timezone=True), nullable=False),
+    )
+    updated_at: datetime =  Field(
+        default = None,
+        sa_column=Column(DateTime(timezone=True), nullable=True),
+    )
 
     ab_test: "ABTest" = Relationship(back_populates="pairs")
 
@@ -157,15 +184,31 @@ class ABTestVote(SQLModel, table=True):
 
     id: uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True)
     pair_id: uuid.UUID = Field(foreign_key="ab_test_pair.id")
-    user_id: uuid.UUID
+    user_id: uuid.UUID = Field (default_factory=uuid.uuid4)
     selected_contribution_ids: List[uuid.UUID] = Field(sa_column=Column(JSON))  #Store selected contribution IDs
-    vote_assigned_at: datetime = Field(default_factory=datetime.utcnow)
-    vote_submitted_at: Optional[datetime] = None
+
+    vote_assigned_at: datetime =  Field(
+        default_factory=lambda: datetime.now(timezone.utc) + timedelta(days=30),
+        sa_column=Column(DateTime(timezone=True), nullable=False),
+    )
+
+    vote_submitted_at: Optional[datetime] = Field(
+        default=None,
+        sa_column=Column(DateTime(timezone=True), nullable=False)
+    )
+
 
     # For randomization tracking
     a_shown_first: bool = Field(default=True)  # Track which option was shown first
 
-    created_at: datetime = Field(default_factory=datetime.utcnow)
-    updated_at: datetime = Field(default_factory=datetime.utcnow)
+    created_at: datetime =  Field(
+        default_factory=lambda: datetime.now(timezone.utc) + timedelta(days=30),
+        sa_column=Column(DateTime(timezone=True), nullable=False),
+    )
+
+    updated_at: datetime =  Field(
+        default=None,
+        sa_column=Column(DateTime(timezone=True), nullable=True),
+    )
 
     pair: "ABTestPair" = Relationship(back_populates="votes")

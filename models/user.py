@@ -1,8 +1,8 @@
 import uuid
 from typing import TYPE_CHECKING
-from sqlmodel import SQLModel, Field, Relationship
+from sqlmodel import SQLModel, Field, Relationship, DateTime,Column
 from typing import Optional, List
-from datetime import datetime
+from datetime import datetime, timezone, timedelta
 from enum import Enum as PyEnum
 
 if TYPE_CHECKING:
@@ -45,8 +45,14 @@ class User(SQLModel, table=True):
     total_annotation_tokens: int = Field(default=0)
 
     # Timestamps
-    created_at: datetime = Field(default_factory=datetime.utcnow)
-    updated_at: datetime = Field(default_factory=datetime.utcnow)
+    created_at: datetime =   Field(
+        default_factory=lambda: datetime.now(timezone.utc) + timedelta(days=30),
+        sa_column=Column(DateTime(timezone=True), nullable=False),
+    )
+    updated_at: datetime =  Field(
+        default_factory=lambda: datetime.now(timezone.utc) + timedelta(days=30),
+        sa_column=Column(DateTime(timezone=True), nullable=False),
+    )
 
     transcription_contributions: List["TranscriptionContribution"] = Relationship(
         back_populates="user", sa_relationship_kwargs={"cascade": "all, delete-orphan", "lazy": "select"}
@@ -106,27 +112,25 @@ class UserLanguage(SQLModel, table=True):
     )
 
     user_id: uuid.UUID = Field(foreign_key="user.id")
+    
     language_id: uuid.UUID = Field(foreign_key="language.id")
 
     proficiency: str = Field(default="beginner")
 
     ranking: int = Field(default=0)  # Ranking in the leaderboard for this language
 
-    total_hours_speech: int = Field(default=0)
-    total_sentences_translated: int = Field(default=0)
-    total_annotation_tokens: int = Field(default=0)
-
     # Relationships
     user: "User" = Relationship(
-        back_populates="user_languages", sa_relationship_kwargs={"lazy": "selectin"}
+        back_populates="user_languages"
     )
+    
     language: "Language" = Relationship(
-        back_populates="user_languages", sa_relationship_kwargs={"lazy": "selectin"}
+        back_populates="user_languages", sa_relationship_kwargs={}
     )
 
     task_stats: List["UserLanguageStats"] = Relationship(
         back_populates="user_language",
-        sa_relationship_kwargs={"lazy": "selectin", "cascade": "all, delete-orphan"}
+        sa_relationship_kwargs={ "cascade": "all, delete-orphan"}
     )
 
 
@@ -164,8 +168,15 @@ class UserLanguageStats(SQLModel, table=True):
     contribution_score_counter: int = Field(default=0)
 
     # Timestamps
-    created_at: datetime = Field(default_factory=datetime.utcnow)
-    updated_at: datetime = Field(default_factory=datetime.utcnow)
+    created_at: datetime = Field(
+        default_factory=lambda: datetime.now(timezone.utc),
+        sa_column=Column(DateTime(timezone=True), nullable=False),
+    )
+
+    updated_at: datetime = Field(
+        default_factory=lambda: datetime.now(timezone.utc),
+        sa_column=Column(DateTime(timezone=True), nullable=False),
+    )
 
     user_language: "UserLanguage" = Relationship(
         back_populates="task_stats",

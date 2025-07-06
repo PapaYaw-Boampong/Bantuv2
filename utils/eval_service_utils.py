@@ -1,7 +1,7 @@
 import uuid
 from typing import Dict, List, Optional, Tuple, Any
 
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 import random
 
 import json
@@ -49,7 +49,7 @@ def prioritize_branches(
         threshold: float = 0.4
 ) -> List[EvaluationBranch]:
     def relative_depth(b: EvaluationBranch):
-        return len(b.evaluation_steps) / (b.max_depth or 1)
+        return b.depth / (b.max_depth or 1)
 
     reverse = proficiency >= settings.EVALUATOR_PROFICIENCY_THRESHOLD
     sorted_branches = sorted(branches, key=relative_depth, reverse=reverse)
@@ -65,7 +65,7 @@ def is_expired(step: EvaluationStep) -> bool:
     if not step.assigned_at:
         return True
     expiration = step.assigned_at + timedelta(minutes=15)  # TTL window
-    return datetime.utcnow() > expiration
+    return datetime.now(timezone.utc) > expiration
 
 
 def create_pairs(contribution_ids: List[str]) -> List[Tuple[str, str]]:
@@ -113,38 +113,3 @@ def get_active_stage(ab_test_data: Dict[str, Any]) -> Optional[Dict[str, Any]]:
     return None
 
 
-def tally_pair_votes(pair_results: Dict[str, str]) -> List[str]:
-    """
-    Tally votes for a single pair. Votes can be:
-      - A contribution ID
-      - The string "equal"
-
-    Returns:
-      - Both IDs if "equal" votes reach the majority threshold.
-      - Otherwise the ID with the highest count.
-    """
-    counts: Dict[str, int] = {}
-    for vote in pair_results.values():
-        counts[vote] = counts.get(vote, 0) + 1
-
-    total_votes = sum(counts.values())
-    # Majority threshold: more than half
-    threshold = (total_votes // 2) + 1
-
-    equal_count = counts.get("equal", 0)
-    # If equal is a majority, advance both
-    if equal_count >= threshold:
-        # Collect all contribution IDs (keys except "equal")
-        return [c for c in counts.keys() if c != "equal"]
-
-    # Otherwise, find the non-equal with max votes
-    winner: Optional[str] = None
-    max_votes = 0
-    for candidate, cnt in counts.items():
-        if candidate == "equal":
-            continue
-        if cnt > max_votes:
-            max_votes = cnt
-            winner = candidate
-
-    return [winner] if winner else []

@@ -46,7 +46,7 @@ async def create_contribution(
             sample_id=sample_id,
             data=data,
             language_id=language_id,
-            challenge_id=challenge_id
+            challenge_id=challenge_id,
         )
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))

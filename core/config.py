@@ -23,6 +23,9 @@ class Settings(BaseModel):
         "http://localhost:8000",  # FastAPI default
     ]
 
+    EVAL_INSTANCE_WIDTH: int = 2
+    EVAL_INSTANCE_DEPTH: int = 2
+
     TRANSCRIPTION_BASE_WIDTH: int = 2
     TRANSLATION_BASE_WIDTH: int = 2
     ANNOTATION_BASE_WIDTH: int = 2
@@ -79,6 +82,13 @@ class Settings(BaseModel):
     # Logging
     LOG_LEVEL: str = os.getenv("LOG_LEVEL", "INFO")
 
+
+    # GCP Settings
+    GCP_BUCKET_NAME: str = os.getenv("GCP_BUCKET_NAME")
+    GCP_SERVICE_ACCOUNT_KEY_PATH: str = os.getenv("GCP_SERVICE_ACCOUNT_KEY_PATH")
+    GCS_SERVICE_ACCOUNT_KEY: str = None
+
+
     # Computed SQLAlchemy Database URI
     @computed_field
     @property
@@ -111,6 +121,3 @@ class Settings(BaseModel):
 
 # Create settings instance
 settings = Settings()
-
-# # Print to verify
-# print(settings.SQLALCHEMY_DATABASE_URI)

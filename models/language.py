@@ -1,5 +1,5 @@
 import uuid
-from sqlmodel import SQLModel, Field, Relationship
+from sqlmodel import SQLModel, Field, Relationship, Column, DateTime
 from typing import List, Optional
 from typing import TYPE_CHECKING
 from datetime import datetime
@@ -23,7 +23,10 @@ class Language(SQLModel, table=True):
 
     is_active: bool = Field(default=True)
 
-    updated_at: Optional[datetime] = Field(default=None, nullable=True)
+    updated_at: Optional[datetime] = Field(
+        default=None,
+        sa_column=Column(DateTime(timezone=True))
+    )
 
     code: str = Field(
         index=True, unique=True

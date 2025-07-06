@@ -8,6 +8,10 @@ from datetime import datetime
 from models.language import Language
 from models.user import UserLanguage
 
+import logging
+
+logger = logging.getLogger("my_app")
+
 
 class LanguageService:
     def __init__(self, db: AsyncSession):
@@ -153,7 +157,7 @@ class LanguageService:
         except IntegrityError as e:
             # Handle the error, e.g., raise a custom exception or return an error response
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST,
-                                detail="A language with this code already exists.")
+                                detail=f"Integrity error: {e}")
 
     async def get_user_languages(self, user_id: uuid.UUID, skip: int = 0, limit: int = 100) -> List[dict]:
         """

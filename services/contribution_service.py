@@ -1,10 +1,10 @@
-import uuid
+from pydantic import UUID4
 from random import choice
 from typing import Dict, List, Optional, Union, Any, Type
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func, desc, or_, and_
 from sqlalchemy.orm import selectinload
-from datetime import datetime
+from datetime import datetime, timezone
 from services.language_service import LanguageService
 
 from core.config import settings
@@ -17,11 +17,15 @@ from models import (
     TranslationSample,
 )
 
+
 from schemas.contribution import (
     ContributionCreate,
     ContributionUpdate,
     ContributionFilter,
     ContributionStats,
+    AnnotationContributionRead,
+    TranscriptionContributionRead,
+    TranslationContributionRead
 )
 
 from schemas.sample_data import (
@@ -72,12 +76,12 @@ class ContributionManagementService:
     # =========== Create Operations ==========
     async def create_contribution(
             self,
-            challenge_id: Optional[uuid.UUID],
-            user_id: uuid.UUID,
+            challenge_id: Optional[UUID4],
+            user_id: UUID4,
             contribution_type: str,
-            sample_id: uuid.UUID,
-            language_id: uuid.UUID,
-            data: ContributionCreate
+            sample_id: UUID4,
+            language_id: UUID4,
+            data: ContributionCreate,
     ) -> Union[AnnotationContribution, TranscriptionContribution, TranslationContribution]:
         """Create a new contribution of the specified type"""
         model_class = await self._get_model_class(contribution_type)
@@ -85,7 +89,7 @@ class ContributionManagementService:
         contribution_data = {
             "user_id": user_id,
             "sample_id": sample_id,
-            "created_at": datetime.utcnow(),
+            "created_at": datetime.now(timezone.utc),
             "active": False,
             "flagged": False,
             "accepted": False,
@@ -93,6 +97,11 @@ class ContributionManagementService:
                 str(user_id): [0, str(challenge_id)] if challenge_id else [0, False]
             }
         }
+
+        # insert id if applicable 
+        if data.id:
+            contribution_data['id'] = data.id
+
 
         language_service = LanguageService(self.db)
         from services.challenge_service import ChallengeService
@@ -102,8 +111,12 @@ class ContributionManagementService:
             is_contribution=True
         )
 
-        if data.target_text == "" and data.target_url == "":
-            raise ValueError("Contribution cannot be empty")
+        if contribution_type == "annotation" or contribution_type == "transcription":
+            if  data.file_name == "":
+                raise ValueError("Contribution cannot be empty")
+        if contribution_type == "transaltion": 
+            if data.target_text == "":
+                raise ValueError("Contribution cannot be empty")
 
         # Type-specific fields
         if contribution_type in {"annotation", "translation"}:
@@ -111,7 +124,7 @@ class ContributionManagementService:
             word_list = data.target_text.strip().lower().split()
 
             if contribution_type == "annotation":
-                contribution_data["img_url"] = data.img_url
+                contribution_data["file_name"] = data.file_name
                 token_count = len(word_list)
                 stats_data.total_annotation_tokens = token_count
 
@@ -121,7 +134,7 @@ class ContributionManagementService:
 
         elif contribution_type == "transcription":
             contribution_data["sample_text"] = data.sample_text
-            contribution_data["target_url"] = data.target_url
+            contribution_data["file_name"] = data.file_name
             stats_data.total_hours_speech = data.speech_length
 
         # Save Contribution
@@ -130,7 +143,7 @@ class ContributionManagementService:
         await self.db.commit()
         await self.db.refresh(contribution)
 
-        # Record contribution stats for challenge or globally
+        # Record challenge-specific stats 
         if challenge_id:
             await challenge_service.update_participation_stats(
                 event_id=challenge_id,
@@ -146,8 +159,8 @@ class ContributionManagementService:
             is_evaluation=stats_data.is_evaluation
         )
 
-        # global stats
-        await language_service.user_language_stats_repository.update_language_stats(
+        # update global stats
+        await language_service.user_language_stats_repository.update_stats(
             user_id=user_id,
             language_id=language_id,
             task_type=contribution_type,
@@ -164,19 +177,21 @@ class ContributionManagementService:
         from services.sample_data_service import SampleDataService
 
         sample_service = SampleDataService(self.db)
+        
         await sample_service.update_sample_with_contribution(
             sample_id=sample_id,
             sample_type=contribution_type,
         )
 
-        return contribution
+        return contribution # patch to return the asset name and the type
 
     # =========== Read Operations ==========
     async def get_contribution(
             self,
-            contribution_id: uuid.UUID,
-            contribution_type: str
-    ) -> Union[AnnotationContribution, TranscriptionContribution, TranslationContribution]:
+            contribution_id: UUID4,
+            contribution_type: str,
+            include_assets:bool = True
+    ) -> Union[AnnotationContributionRead, TranscriptionContributionRead, TranslationContributionRead]:
         """Get a specific contribution by ID and type"""
         model_class = await self._get_model_class(contribution_type)
 
@@ -187,14 +202,37 @@ class ContributionManagementService:
 
         if not contribution:
             raise ValueError(f"{contribution_type.capitalize()} contribution with ID {contribution_id} not found")
-
-        return contribution
+        
+        # Include signed Url for asset retrieval
+        signed_url = None
+        if (contribution_type == "annotation" or contribution_type == "transcription") and include_assets:
+            from services.storage_service import StorageService
+            storage_service = StorageService()
+            signed_url = await storage_service.generate_download_url(contribution.file_name)
+        
+        # Convert to the correct Pydantic schema
+        if contribution_type == "annotation":
+            return AnnotationContributionRead(
+                **contribution.model_dump(exclude={"file_name"}),
+                signed_url=signed_url
+            )
+        elif contribution_type == "transcription":
+            return TranscriptionContributionRead(
+                **contribution.model_dump(exclude={"file_name"}),
+                signed_url=signed_url
+            )
+        elif contribution_type == "translation":
+            return TranslationContributionRead(
+                **contribution.model_dump()
+            )
+        else:
+            raise ValueError(f"Unsupported contribution type: {contribution_type}")
 
     async def get_contribution_ancestors(
             self,
-            contribution_id: uuid.UUID,
+            contribution_id: UUID4,
             contribution_type: str
-    ) -> Dict[uuid.UUID, int]:
+    ) -> Dict[UUID4, int]:
         contribution = await self.get_contribution(contribution_id, contribution_type)
         ancestors = contribution.ancestors
         if not ancestors:
@@ -238,7 +276,7 @@ class ContributionManagementService:
 
     async def update_contribution(
             self,
-            contribution_id: uuid.UUID,
+            contribution_id: UUID4,
             contribution_type: str,
             data: ContributionUpdate
     ) -> Union[AnnotationContribution, TranscriptionContribution, TranslationContribution]:
@@ -256,7 +294,7 @@ class ContributionManagementService:
 
     async def mark_as_passed(
             self,
-            contribution_id: uuid.UUID,
+            contribution_id: UUID4,
             contribution_type: str
     ) -> None:
         """Mark a contribution as passed validation"""
@@ -265,7 +303,7 @@ class ContributionManagementService:
         await self.db.commit()
 
     async def flag_contribution(
-            self, contribution_id: uuid.UUID,
+            self, contribution_id: UUID4,
             contribution_type: str
     ) -> None:
         """Flag a contribution for review"""
@@ -274,7 +312,7 @@ class ContributionManagementService:
         await self.db.commit()
 
     async def toggle_active_state(
-            self, contribution_id: uuid.UUID,
+            self, contribution_id: UUID4,
             contribution_type: str, active: bool
     ) -> None:
         """Toggle the active state of a contribution"""
@@ -285,7 +323,7 @@ class ContributionManagementService:
     # =========== Delete Operations ==========
 
     async def delete_contribution(
-            self, contribution_id: uuid.UUID,
+            self, contribution_id: UUID4,
             contribution_type: str
     ) -> bool:
         """Delete a contribution (soft delete by setting active=False)"""
@@ -298,7 +336,7 @@ class ContributionManagementService:
 
     async def get_user_contribution_stats(
             self,
-            user_id: Optional[uuid.UUID] = None,
+            user_id: Optional[UUID4] = None,
             contribution_type: Optional[str] = None
     ) -> ContributionStats:
         """Get statistics about contributions"""
@@ -371,16 +409,16 @@ class ContributionManagementService:
     # =========== Integration with other services ==========
     async def update_ancestors(
             self,
-            contribution_id: uuid.UUID,
+            contribution_id: UUID4,
             contribution_type: str,
-            user_id: uuid.UUID,
-            challenge_id: Optional[uuid.UUID] = None
+            user_id: UUID4,
+            challenge_id: Optional[UUID4] = None
     ) -> Union[AnnotationContribution, TranscriptionContribution, TranslationContribution]:
         """
         Award points to a user for their contribution (integration with Reward System)
         This is a placeholder for integration with your reward system
         """
-        contribution = await self.get_contribution(contribution_id, contribution_type)
+        contribution = await self.get_contribution(contribution_id, contribution_type,include_assets = False)
 
         if challenge_id:
             in_challenge = True
@@ -396,11 +434,11 @@ class ContributionManagementService:
 
     async def create_custom_contribution(
             self,
-            user_id: uuid.UUID,
-            language_id: uuid.UUID,
+            user_id: UUID4,
+            language_id: UUID4,
             contribution_data: ContributionCreate,
             contribution_type: str,
-            challenge_id: Optional[uuid.UUID] = None
+            challenge_id: Optional[UUID4] = None
     ) -> Dict:
         """
         Handle custom contributions by creating the appropriate seed and sample,
@@ -423,7 +461,7 @@ class ContributionManagementService:
 
             # Prepare payload
             contribution_payload = ContributionCreate(
-                target_url=contribution_data['target_url'],  # or whichever audio to start with
+                file_name=contribution_data['file_name'],  # or whichever audio to start with
                 sample_text=contribution_data['transcription_text'],
                 speech_length=contribution_data.get("speech_length", 0.0)
             )
@@ -463,7 +501,7 @@ class ContributionManagementService:
 
             sample = AnnotationSampleCreate(
                 seed_data_id=seed_id,
-                active=False,
+                eval=False,
                 language_id=language_id,
             )
 
@@ -473,7 +511,7 @@ class ContributionManagementService:
 
             contribution_payload = ContributionCreate(
                 target_text=contribution_data['target_text'],
-                img_url=contribution_data['img_url'],
+                file_name=contribution_data['file_name'],
             )
 
         else:
@@ -498,8 +536,10 @@ class ContributionManagementService:
 
     async def unpackPoints(
             self,
-            contribution_id: uuid.UUID,
+            contribution_id: UUID4,
+            language_id: UUID4,
             contribution_type: str,
+
     ) -> bool:
         contribution = await self.get_contribution(contribution_id, contribution_type)
 
@@ -521,6 +561,7 @@ class ContributionManagementService:
 
         from services.challenge_service import ChallengeService
         from services.language_service import LanguageService
+
         challenge_service = ChallengeService(self.db)
         language_service = LanguageService(self.db)
 
@@ -530,10 +571,10 @@ class ContributionManagementService:
             points = points_data[0]
             challenge_id = points_data[1] if points_data[1] != False else None
 
-            is_contribution = (i == 0)  # First ancestor is the contributor
-            is_evaluation = (i > 0)  # Other ancestors are evaluators
+            is_contributor = (i == 0)  # First ancestor is the contributor
 
-            if is_contribution:
+
+            if is_contributor:
                 # Calculate contributor score
                 acceptance_score = (ancestor_count - 1) / total_pipe_depth
             else:
@@ -544,20 +585,20 @@ class ContributionManagementService:
             if challenge_id:
                 await challenge_service.update_challenge_participation_scores(
                     event_id=challenge_id,
-                    user_id=user_id,
-                    is_contribution=is_contribution,
-                    is_evaluation=is_evaluation,
+                    user_id=UUID4(user_id),
+                    is_contribution=is_contributor,
+                    is_evaluation= not is_contributor,
                     acceptance_score=acceptance_score,
                     points=points
                 )
 
             # Update global language stats scores regardless
-            await language_service.user_language_repository.update_user_language_scores(
+            await language_service.user_language_stats_repository.update_user_language_scores(
                 user_id=user_id,
-                language_id=contribution.language_id,
+                language_id=language_id,
                 task_type=contribution_type,
-                is_contribution=is_contribution,
-                is_evaluation=is_evaluation,
+                is_contribution=is_contributor,
+                is_evaluation=not is_contributor,
                 acceptance_score=acceptance_score
             )
 

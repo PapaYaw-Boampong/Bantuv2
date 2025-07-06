@@ -1,4 +1,5 @@
 from fastapi import APIRouter, Depends, HTTPException, Query, Path, UploadFile, File
+from fastapi.responses import JSONResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 from typing import List, Optional
 from uuid import UUID
@@ -76,15 +77,19 @@ async def get_transcription_samples(
         limit: int = Query(10, ge=1, le=100),
         priority_threshold: int = Query(0, ge=0),
         service: SampleDataService = Depends(get_sample_service),
-        current_user: User = Depends(get_current_active_user)
+        current_user: User = Depends(get_current_active_user),
+        buffer: Optional[str] = Query(default=""),
 ):
     """Get transcription samples with optional filtering"""
+    # Skip empty UUID strings
+    currently_buffered = [uuid for uuid in buffer.split(",") if uuid]
     try:
         samples = await service.get_transcription_samples(
             language_id=language_id,
             limit=limit,
             priority_threshold=priority_threshold,
-            user_id=current_user.id
+            user_id=current_user.id,
+            currently_buffered = currently_buffered
         )
         return {"samples": samples, "count": len(samples)}
     except ValueError as e:
@@ -152,16 +157,19 @@ async def get_translation_samples(
         language_id: Optional[UUID] = None,
         limit: int = Query(10, ge=1, le=100),
         priority_threshold: int = Query(0, ge=0),
+        buffer: Optional[str] = Query(default=""),
         service: SampleDataService = Depends(get_sample_service),
         current_user: User = Depends(get_current_active_user)
 ):
     """Get translation samples with optional filtering"""
+    currently_buffered = [uuid for uuid in buffer.split(",") if uuid]
     try:
         samples = await service.get_translation_samples(
             language_id=language_id,
             limit=limit,
             priority_threshold=priority_threshold,
-            user_id=current_user.id
+            user_id=current_user.id,
+            currently_buffered = currently_buffered
         )
 
         return {"samples": samples, "count": len(samples)}
@@ -169,8 +177,7 @@ async def get_translation_samples(
         raise HTTPException(status_code=400, detail=str(e))
 
 
-# ======== ANNOTATION SAMPLES ========
-
+# ======== ANNOTATION SAMPLES =======
 @router.post("/annotation/seed", summary="Create an annotation seed")
 async def create_annotation_seed(
         seed: AnnotationSeedCreate,
@@ -199,15 +206,21 @@ async def create_annotation_sample(
 
 @router.post("/annotation/csv", summary="Create annotation samples from CSV")
 async def bulk_create_annotation_from_csv(
-        language_id: UUID,
-        file: UploadFile = File(...),
+        captions_file: UploadFile = File(...),
+        images_zip: UploadFile = File(...),
         service: SampleDataService = Depends(get_sample_service),
         current_user: User = Depends(get_current_superuser)
 ):
     """Import annotation seeds and samples from a CSV file"""
     try:
-        count = await service.bulk_create_annotation_seeds_from_csv(file, language_id)
-        return {"success": True, "count": count}
+
+        count = await service.bulk_upload_annotation_seeds(
+            captions_file=captions_file,
+            images_zip=images_zip,
+        )
+
+        return JSONResponse(content={"success": True, "count": count})
+    
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
 
@@ -218,15 +231,18 @@ async def get_annotation_samples(
         limit: int = Query(10, ge=1, le=100),
         priority_threshold: int = Query(0, ge=0),
         service: SampleDataService = Depends(get_sample_service),
-        current_user: User = Depends(get_current_active_user)
+        current_user: User = Depends(get_current_active_user),
+        buffer: Optional[str] = Query(default=""),
 ):
     """Get annotation samples with optional filtering"""
+    currently_buffered = [uuid for uuid in buffer.split(",") if uuid]
     try:
         samples = await service.get_annotation_samples(
             language_id=language_id,
             limit=limit,
             priority_threshold=priority_threshold,
-            user_id=current_user.id
+            user_id=current_user.id,
+            currently_buffered = currently_buffered
         )
         return {"samples": samples, "count": len(samples)}
     except ValueError as e:
@@ -234,7 +250,6 @@ async def get_annotation_samples(
 
 
 # ======== SAMPLE ASSIGNMENT ========
-
 @router.get("/assign/{sample_type}", summary="Assign samples to a user")
 async def assign_samples_to_user(
         language_id: UUID = Query(..., description="ID of the language"),
@@ -259,8 +274,6 @@ async def assign_samples_to_user(
 
 
 # ======== SAMPLE MANAGEMENT ========
-
-
 @router.patch("/{sample_type}/lock", summary="Lock or unlock samples")
 async def lock_samples(
         sample_type: str = Path(..., description="Type of sample (transcription, translation, annotation)"),
@@ -285,5 +298,3 @@ async def lock_samples(
         }
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
-
-

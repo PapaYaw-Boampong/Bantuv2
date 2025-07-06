@@ -7,8 +7,8 @@ class EvaluationStepSubmit(BaseModel):
     """Schema for submitting an evaluation step"""
     eval_decision: Optional[bool] = Field(None, description="Accept (True) or reject (False) the contribution")
     correction_id: Optional[UUID4] = Field(None, description="ID of the correction if eval_decision is False")
-    run_abtest: bool = Field(False, description="Whether to run A/B test for this step")
-
+    run_abtest: bool = Field(False, description="Whether to run A/B test for the next step")
+    abtest_decision: Optional[str] = Field("b", description="Which option was selected btn A and B" )
 
 class EvaluationInstanceCreate(BaseModel):
     """Schema for creating an evaluation instance"""

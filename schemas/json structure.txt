@@ -9,7 +9,6 @@ cash
 badges
 {
   "badge_name": "Top Contributor",
-  "badge_icon": "icon_url",
   "badge_description": "Awarded for top contributions.",
   "badge icon": ""
 }
@@ -52,3 +51,25 @@ swag
   "description": "Tiered rewards based on rank in the challenge."
 }
  replace cash either other rewards if necessary based on the type we know how to parse it
+
+ /////////////////
+ {
+    description: "Everyone Wins",
+      cash: {
+        amount: 50,
+        currency: "USD"
+      },
+      badge:
+        {
+          badge_name: "Participation",
+          badge_icon: "icon_url",
+          badge_description: "Awarded for participation."
+        }
+      ,
+      swag: {
+        swag_item: "Challenge T-shirt",
+        swag_description: "Exclusive challenge t-shirt",
+        token: "swag_token"
+      }
+
+ }

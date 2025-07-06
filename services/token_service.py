@@ -1,4 +1,4 @@
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 import time
 from typing import Dict, Union
 from sqlmodel import select
@@ -72,7 +72,7 @@ class TokenService:
         token_value = secrets.token_hex(64)  # 128 character random string
         token_hash = _hash_token(token_value)
 
-        expires_at = datetime.utcnow() + timedelta(days=self.refresh_token_expire_days)
+        expires_at = datetime.now(timezone.utc) + timedelta(days=self.refresh_token_expire_days)
 
         # Create database record for refresh token
         refresh_token_record = RefreshToken(
@@ -122,7 +122,7 @@ class TokenService:
             )
 
         # Update last used time
-        db_token.last_used_at = datetime.utcnow()
+        db_token.last_used_at = datetime.now(timezone.utc)
 
         # Get the user asynchronously
         statement = select(User).where(User.id == db_token.user_id)
@@ -144,7 +144,7 @@ class TokenService:
         # Check if we need to rotate the refresh token
         # Rotate after 7 days or 5 uses, whichever comes first
         should_rotate = False
-        seven_days_ago = datetime.utcnow() - timedelta(days=7)
+        seven_days_ago = datetime.now(timezone.utc) - timedelta(days=7)
 
         if db_token.issued_at < seven_days_ago or db_token.rotations_count >= 50:
             should_rotate = True
@@ -152,7 +152,7 @@ class TokenService:
         if should_rotate:
             # Revoke old token
             db_token.is_revoked = True
-            db_token.revoked_at = datetime.utcnow()
+            db_token.revoked_at = datetime.now(timezone.utc)
             db_token.revoked_reason = "Rotation"
 
             # Create new refresh token
@@ -167,7 +167,7 @@ class TokenService:
                 device_info=db_token.device_info,
                 ip_address=ip_address or db_token.ip_address,
                 user_agent=db_token.user_agent,
-                expires_at=datetime.utcnow() + timedelta(days=self.refresh_token_expire_days),
+                expires_at=datetime.now(timezone.utc) + timedelta(days=self.refresh_token_expire_days),
                 rotations_count=0
             )
 
@@ -210,7 +210,7 @@ class TokenService:
                 return False
 
             db_token.is_revoked = True
-            db_token.revoked_at = datetime.utcnow()
+            db_token.revoked_at = datetime.now(timezone.utc)
             db_token.revoked_reason = reason
 
             await self.db.commit()
@@ -234,7 +234,7 @@ class TokenService:
         count = 0
         for token in tokens:
             token.is_revoked = True
-            token.revoked_at = datetime.utcnow()
+            token.revoked_at = datetime.now(timezone.utc)
             token.revoked_reason = reason
             count += 1
 
@@ -244,12 +244,12 @@ class TokenService:
     # JWT token methods (unchanged since they don't interact with the database)
     def _create_access_token(self, subject: Union[str, int]) -> str:
         """Create a JWT access token (short-lived)"""
-        expire = datetime.utcnow() + timedelta(minutes=self.access_token_expire_minutes)
+        expire = datetime.now(timezone.utc) + timedelta(minutes=self.access_token_expire_minutes)
         to_encode = {
             "exp": expire,
             "sub": str(subject),
             "type": "access",
-            "iat": datetime.utcnow()
+            "iat": datetime.now(timezone.utc)
         }
 
         # Convert datetime to Unix timestamp
@@ -261,12 +261,12 @@ class TokenService:
 
     def _create_refresh_token(self, subject: Union[str, int]) -> str:
         """Create a JWT refresh token (long-lived)"""
-        expire = datetime.utcnow() + timedelta(days=self.refresh_token_expire_days)
+        expire = datetime.now(timezone.utc) + timedelta(days=self.refresh_token_expire_days)
         to_encode = {
             "exp": expire,
             "sub": str(subject),
             "type": "refresh",
-            "iat": datetime.utcnow()
+            "iat": datetime.now(timezone.utc)
         }
 
         # Convert datetime to Unix timestamp

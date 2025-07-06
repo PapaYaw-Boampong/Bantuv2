@@ -1,5 +1,5 @@
 from typing import List, Optional, Dict, Any, Tuple
-from datetime import datetime
+from datetime import datetime, timezone
 from uuid import UUID
 from fastapi import HTTPException
 from sqlalchemy import func
@@ -59,7 +59,7 @@ def _get_remaining_fields(challenge: Challenge) -> List[str]:
 
 
 def _get_challenge_status(challenge: Any) -> ChallengeStatus:
-    now = datetime.utcnow()
+    now = datetime.now(timezone.utc)
     if challenge.start_date > now:
         return ChallengeStatus.UPCOMING
     elif challenge.end_date < now:
@@ -202,7 +202,7 @@ class ChallengeService:
 
     def _update_challenge_status(self, challenge: Challenge, update_data: dict):
         """Helper to update challenge status based on dates."""
-        now = datetime.utcnow()
+        now = datetime.now(timezone.utc)
         start_date = update_data.get('start_date', challenge.start_date)
         end_date = update_data.get('end_date', challenge.end_date)
 
@@ -268,7 +268,7 @@ class ChallengeService:
         challenge.is_published = True
 
         challenge.status = ChallengeStatus.ACTIVE if (
-                challenge.start_date <= datetime.utcnow() <= challenge.end_date
+                challenge.start_date <= datetime.now(timezone.utc) <= challenge.end_date
         ) else ChallengeStatus.UPCOMING
 
         self.db.add(challenge)
@@ -418,7 +418,7 @@ class ChallengeService:
         participation.total_sentences_translated += sentences
         participation.total_annotation_tokens += tokens
 
-        participation.updated_at = datetime.utcnow()
+        participation.updated_at = datetime.now(timezone.utc)
 
         await self.db.commit()
         await self.db.refresh(participation)
@@ -535,7 +535,7 @@ class ChallengeService:
     async def update_challenge_statuses(self) -> int:
         """Update the status of all challenges based on current date
         Returns the number of challenges updated"""
-        now = datetime.utcnow()
+        now = datetime.now(timezone.utc)
 
         # Find upcoming challenges that should be active
         upcoming_to_active = select(Challenge).where(
@@ -636,7 +636,7 @@ class ChallengeService:
             participation.evaluation_acceptance_score = ((participation.eval_score_counter * participation.eval_score_counter) + acceptance_score)/(participation.eval_score_counter + 1)
 
         # Update timestamp
-        participation.updated_at = datetime.utcnow()
+        participation.updated_at = datetime.now(timezone.utc)
 
         await self.db.commit()
         await self.db.refresh(participation)

@@ -1,9 +1,9 @@
 import uuid
 from sqlmodel import SQLModel, Field, Relationship
 from sqlalchemy import JSON
-from sqlalchemy import Column
+from sqlalchemy import Column, DateTime
 from typing import List, Dict
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from typing import Optional, TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -41,14 +41,19 @@ class TranscriptionSample(SQLModel, table=True):
         default=[]
     )
 
-    transcription_text: str  = Field(default=None, nullable=True)   # Stores the transcribed text
+    transcription_text: str = Field(default=None, nullable=True)   # Stores the transcribed text
 
     category: str = Field(default=None, nullable=True)  # e.g., "daily conversation", "technical", "medical"
 
-    created_at: datetime = Field(default_factory=datetime.utcnow)
-    last_active_at: datetime = Field(default_factory=datetime.utcnow)
+    created_at: datetime =  Field(
+        default_factory=lambda: datetime.now(timezone.utc) + timedelta(days=30),
+        sa_column=Column(DateTime(timezone=True), nullable=False),
+    )
 
-    active: bool = Field(default=False)  # Becomes True when assigned to a user
+    last_active_at: datetime =  Field(
+        default_factory=lambda: datetime.now(timezone.utc) + timedelta(days=30),
+        sa_column=Column(DateTime(timezone=True), nullable=False),
+    )
     eval: bool = Field(default=False)  # Becomes True when assigned to an evaluation instance
     seed_count: int = Field(default=0)  # Store for the sample, used for tracking
 
@@ -56,16 +61,15 @@ class TranscriptionSample(SQLModel, table=True):
 
     # Relationships
     language: "Language" = Relationship(
-        back_populates="transcriptions",
-        sa_relationship_kwargs={"lazy": "selectin"}
+        back_populates="transcriptions"
     )
     contributions: List["TranscriptionContribution"] = Relationship(
         back_populates="transcription_sample",
-        sa_relationship_kwargs={"cascade": "all, delete-orphan", "lazy": "selectin"}
+        sa_relationship_kwargs={"cascade": "all, delete-orphan"}
     )
     evaluation_instance: Optional["EvaluationInstance"] = Relationship(
         back_populates="transcription_sample",
-        sa_relationship_kwargs={"cascade": "all, delete-orphan", "lazy": "selectin",
+        sa_relationship_kwargs={"cascade": "all, delete-orphan",
                                 "single_parent": True}
     )
 
@@ -88,14 +92,18 @@ class TranslationSeedData(SQLModel, table=True):
 
     original_text: str  # The base text (usually English or a major language)
     category: str = Field(default=None, nullable=True)  # e.g., "daily conversation", "technical", "medical"
-    created_at: datetime = Field(default_factory=datetime.utcnow)
+    created_at: datetime =  Field(
+        default_factory=lambda: datetime.now(timezone.utc) + timedelta(days=30),
+        sa_column=Column(DateTime(timezone=True), nullable=False),
+    )
+
     active: bool = Field(default=False)  # Becomes True when assigned to a user
 
     priority: int = Field(default=0)  # Priority for translation, higher means more important
     # Relationships
     translations: List["TranslationSample"] = Relationship(
         back_populates="translation_seed_data",
-        sa_relationship_kwargs={"cascade": "all, delete-orphan", "lazy": "selectin"}
+        sa_relationship_kwargs={"cascade": "all, delete-orphan"}
     )
 
 
@@ -126,9 +134,11 @@ class TranslationSample(SQLModel, table=True):
 
     translated_text: str = Field(default=None, nullable=True)  # Final translated version of the original text
 
-    created_at: datetime = Field(default_factory=datetime.utcnow)
+    created_at: datetime =  Field(
+        default_factory=lambda: datetime.now(timezone.utc) + timedelta(days=30),
+        sa_column=Column(DateTime(timezone=True), nullable=False),
+    )
 
-    active: bool = Field(default=False)  # Becomes True when assigned to a user
     eval: bool = Field(default=False)  # Becomes True when assigned to an evaluation instance
 
     priority: int = Field(default=0)  # Priority for translation, higher means more important
@@ -137,20 +147,18 @@ class TranslationSample(SQLModel, table=True):
 
     # Relationships
     translation_seed_data: "TranslationSeedData" = Relationship(
-        back_populates="translations",
-        sa_relationship_kwargs={"lazy": "selectin"}
+        back_populates="translations"
     )
     language: "Language" = Relationship(
-        back_populates="translations",
-        sa_relationship_kwargs={"lazy": "selectin"}
+        back_populates="translations"
     )
     contributions: List["TranslationContribution"] = Relationship(
         back_populates="translation_sample",
-        sa_relationship_kwargs={"cascade": "all, delete-orphan", "lazy": "selectin"}
+        sa_relationship_kwargs={"cascade": "all, delete-orphan"}
     )
     evaluation_instance: Optional["EvaluationInstance"] = Relationship(
         back_populates="translation_sample",
-        sa_relationship_kwargs={"cascade": "all, delete-orphan", "lazy": "selectin",
+        sa_relationship_kwargs={"cascade": "all, delete-orphan",
                                 "single_parent": True}
     )
 
@@ -172,10 +180,15 @@ class AnnotationSeedData(SQLModel, table=True):
         primary_key=True,
         index=True
     )
-    image_url: str = Field(default=None, nullable=False)
-    annotation_text: str = Field(default=None, nullable=False)
+    file_name: str = Field(default=None, nullable=False)
+    source: str = Field(default=None, nullable=True)
+    annotation_text: str = Field(default=None, nullable=True)
     category: str = Field(default=None, nullable=True)  # e.g., "daily conversation", "technical", "medical"
-    created_at: datetime = Field(default_factory=datetime.utcnow)
+    created_at: datetime =  Field(
+        default_factory=lambda: datetime.now(timezone.utc) + timedelta(days=30),
+        sa_column=Column(DateTime(timezone=True), nullable=False),
+    )
+    
     active: bool = Field(default=False)
 
     priority: int = Field(default=0)  # Priority for annotation, higher means more important
@@ -209,13 +222,19 @@ class AnnotationSample(SQLModel, table=True):
         default=None,
         foreign_key="evaluation_instance.id"
     )
+
+    file_name: str = Field(default=None, nullable=True)
+
     annotation_result: List[Dict[str, str]] = Field(
         sa_column=Column(JSON),
         default=[]
     )
 
-    created_at: datetime = Field(default_factory=datetime.utcnow)
-    active: bool = Field(default=False)
+    created_at: datetime =  Field(
+        default_factory=lambda: datetime.now(timezone.utc) + timedelta(days=30),
+        sa_column=Column(DateTime(timezone=True), nullable=False),
+    )
+    
     eval: bool = Field(default=False)  # Becomes True when assigned to an evaluation instance
 
     priority: int = Field(default=0)  # Priority for annotation, higher means more important
@@ -224,19 +243,17 @@ class AnnotationSample(SQLModel, table=True):
 
     # Relationships
     annotation_seed_data: "AnnotationSeedData" = Relationship(
-        back_populates="annotations",
-        sa_relationship_kwargs={"lazy": "selectin"}
+        back_populates="annotations"
     )
     language: "Language" = Relationship(
-        back_populates="annotations",
-        sa_relationship_kwargs={"lazy": "selectin"}
+        back_populates="annotations"
     )
     annotation_contributions: List["AnnotationContribution"] = Relationship(
         back_populates="annotation_sample",
-        sa_relationship_kwargs={"cascade": "all, delete-orphan", "lazy": "selectin"}
+        sa_relationship_kwargs={"cascade": "all, delete-orphan"}
     )
     evaluation_instance: Optional["EvaluationInstance"] = Relationship(
         back_populates="annotation_sample",
-        sa_relationship_kwargs={"cascade": "all, delete-orphan", "lazy": "selectin",
+        sa_relationship_kwargs={"cascade": "all, delete-orphan",
                                 "single_parent": True}
     )

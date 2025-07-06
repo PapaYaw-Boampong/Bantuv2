@@ -1,6 +1,13 @@
 from fastapi import FastAPI
+import logging
 from api.v1.api_router import router
 from fastapi.middleware.cors import CORSMiddleware
+from core.logging_config import LOGGING_CONFIG
+from logging.config import dictConfig
+
+dictConfig(LOGGING_CONFIG)
+
+logger = logging.getLogger("my_app")
 
 app = FastAPI(title="Bantu API", version="1.0", description="API for User & Auth Testing")
 

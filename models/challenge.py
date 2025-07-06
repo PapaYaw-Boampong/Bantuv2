@@ -1,8 +1,8 @@
 import uuid
 from typing import TYPE_CHECKING
-from sqlmodel import SQLModel, Field, Relationship
+from sqlmodel import SQLModel, Field, Relationship, DateTime, Column
 from typing import Optional, List
-from datetime import datetime
+from datetime import datetime, timezone, timedelta
 from enum import Enum as PyEnum
 
 if TYPE_CHECKING:
@@ -50,10 +50,20 @@ class Challenge(SQLModel, table=True):
     event_type: EventType
     task_type: TaskType
     event_category: EventCategory
-    start_date: datetime
-    end_date: datetime
+    start_date: datetime = Field(
+        sa_column=Column(DateTime(timezone=True), nullable=False)
+    )
+
+    end_date: datetime = Field(
+        sa_column=Column(DateTime(timezone=True), nullable=False)
+    )
+
     status: ChallengeStatus
-    created_at: datetime = Field(default_factory=datetime.utcnow)
+
+    created_at: datetime =  Field(
+        default_factory=lambda: datetime.now(timezone.utc) + timedelta(days=30),
+        sa_column=Column(DateTime(timezone=True), nullable=False),
+    )
     is_public: bool = Field(default=True)
     is_published: bool = Field(default=False)
 
@@ -64,17 +74,17 @@ class Challenge(SQLModel, table=True):
     participant_count: int = Field(default=0)
     contribution_count: int = Field(default=0)
 
+
     # Relationships
 
     # Relationships
-    user: Optional["User"]= Relationship(
-        back_populates="challenges",
-        sa_relationship_kwargs={"lazy": "selectin"}
+    user: Optional["User"] = Relationship(
+        back_populates="challenges"
     )
 
     participants: List["ChallengeParticipation"] = Relationship(
         back_populates="challenge",
-        sa_relationship_kwargs={"cascade": "all, delete", "lazy": "selectin"}
+        sa_relationship_kwargs={"cascade": "all, delete"}
     )
 
     reward: "ChallengeReward" = Relationship(
@@ -85,7 +95,7 @@ class Challenge(SQLModel, table=True):
     )
 
     language: "Language" = Relationship(
-        back_populates="challenges", sa_relationship_kwargs={"lazy": "selectin"}
+        back_populates="challenges"
     )
 
     rules: List["ChallengeRule"] = Relationship(
@@ -99,8 +109,7 @@ class Challenge(SQLModel, table=True):
     evaluation_instances: List["EvaluationInstance"] = Relationship(
         back_populates="challenge",
         sa_relationship_kwargs={
-            "cascade": "all, delete-orphan",
-            "lazy": "selectin"
+            "cascade": "all, delete-orphan"
         }
     )
 
@@ -133,8 +142,14 @@ class ChallengeParticipation(SQLModel, table=True):
     evaluation_acceptance_score: float = Field(default=0.0)
 
     # Metadata
-    created_at: datetime = Field(default_factory=datetime.utcnow)
-    updated_at: datetime = Field(default_factory=datetime.utcnow)
+    created_at: datetime =  Field(
+        default_factory=lambda: datetime.now(timezone.utc) + timedelta(days=30),
+        sa_column=Column(DateTime(timezone=True), nullable=False),
+    )
+    updated_at: datetime =  Field(
+        default=None,
+        sa_column=Column(DateTime(timezone=True), nullable=False),
+    )
 
     # Score Counters
     eval_score_counter: int = Field(default=0)
@@ -147,7 +162,7 @@ class ChallengeParticipation(SQLModel, table=True):
     )
     challenge: "Challenge" = Relationship(
         back_populates="participants",
-        sa_relationship_kwargs={"lazy": "selectin", "cascade": "all, delete"}
+        sa_relationship_kwargs={"cascade": "all, delete"}
     )
 
 
@@ -166,8 +181,15 @@ class ChallengeRule(SQLModel, table=True):
     rule_title: str = Field(max_length=100)
     rule_description: str
     is_required: bool = Field(default=True)
-    created_at: datetime = Field(default_factory=datetime.utcnow)
-    updated_at: datetime = Field(default_factory=datetime.utcnow)
+
+    created_at: datetime =  Field(
+        default_factory=lambda: datetime.now(timezone.utc) + timedelta(days=30),
+        sa_column=Column(DateTime(timezone=True), nullable=False),
+    )
+    updated_at: datetime =  Field(
+        default=None,
+        sa_column=Column(DateTime(timezone=True), nullable=False),
+    )
 
     # Relationship
     challenge: "Challenge" = Relationship(

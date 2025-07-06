@@ -1,7 +1,7 @@
-from sqlmodel import SQLModel, Field, Relationship, Column, JSON
+from sqlmodel import SQLModel, Field, Relationship, Column, JSON, DateTime
 from enum import Enum
 from typing import Optional, List, TYPE_CHECKING
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 import uuid
 
 if TYPE_CHECKING:
@@ -9,7 +9,6 @@ if TYPE_CHECKING:
 
 
 # Enum types
-
 class RewardType(str, Enum):
     CASH = "cash"
     BADGE = "badge"
@@ -33,7 +32,6 @@ class Milestone(SQLModel, table=True):
 
     milestones: List["UserMilestone"] = Relationship(
         back_populates="milestone",
-        sa_relationship_kwargs={"lazy": "selectin"}
     )
 
 
@@ -42,7 +40,10 @@ class UserMilestone(SQLModel, table=True):
     id: uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True, index=True)
     user_id: uuid.UUID = Field(foreign_key="user.id")
     milestone_id: uuid.UUID = Field(foreign_key="milestone.id")
-    achieved_at: datetime
+    achieved_at: datetime  = Field(
+        default_factory=lambda: datetime.now(timezone.utc) + timedelta(days=30),
+        sa_column=Column(DateTime(timezone=True), nullable=False),
+    )
 
     user: "User" = Relationship(back_populates="user_milestones", sa_relationship_kwargs={"lazy": "selectin"})
     milestone: "Milestone" = Relationship(back_populates="milestones", sa_relationship_kwargs={"lazy": "selectin"})
@@ -53,10 +54,15 @@ class ChallengeReward(SQLModel, table=True):
     id: uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True, index=True)
 
     reward_type: RewardType  # Cash, badge, leaderboard rank
-    reward_distribution_type: RewardDistributionType  = Field(default=RewardDistributionType.FIXED)  # Fixed, percentage, tiered
+    reward_distribution_type: RewardDistributionType = Field(default=RewardDistributionType.FIXED)  # Fixed, percentage, tiered
+    reward_threshold: int = Field(default=1)  # Minimum number of participants to distribute rewards
+    participant_threshold: int = Field(default=1)  # Maximum number of participants to distribute rewards to
     reward_value: dict = Field(sa_column=Column(JSON))
     description: str = Field(nullable=True)
-    created_at: datetime = Field(default_factory=datetime.utcnow)
+    created_at: datetime  = Field(
+        default_factory=lambda: datetime.now(timezone.utc) + timedelta(days=30),
+        sa_column=Column(DateTime(timezone=True), nullable=False),
+    )
 
     # New Relationship to UserChallengeReward
     user_rewards: List["UserChallengeReward"] = Relationship(
@@ -76,7 +82,11 @@ class UserChallengeReward(SQLModel, table=True):
     id: uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True, index=True)
     user_id: uuid.UUID = Field(foreign_key="user.id")
     reward_id: uuid.UUID = Field(foreign_key="challenge_reward.id")
-    awarded_at: datetime = Field(default_factory=datetime.utcnow)
+    rank: int = Field(default=1)
+    awarded_at: datetime  = Field(
+        default_factory=lambda: datetime.now(timezone.utc) + timedelta(days=30),
+        sa_column=Column(DateTime(timezone=True), nullable=False),
+    )
     claimed: bool = Field(default=False)
 
     reward: "ChallengeReward" = Relationship(back_populates="user_rewards")

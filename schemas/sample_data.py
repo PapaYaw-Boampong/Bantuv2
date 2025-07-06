@@ -26,9 +26,11 @@ class TranslationSeedDataOut(BaseModel):
 
 class AnnotationSeedDataOut(BaseModel):
     id: UUID4
-    image_url: str
+    file_name: str
     annotation_text: str
     category: Optional[str]
+    signed_url: Optional[str] = None  # ← Already correct
+
     model_config = ConfigDict(from_attributes=True)
 
 
@@ -46,7 +48,9 @@ class TranslationSampleOut(SampleBase):
 
 class AnnotationSampleOut(SampleBase):
     seed_data_id: uuid.UUID
-    annotation_seed_data: Optional[AnnotationSeedDataOut]
+    annotation_seed_data: Optional[AnnotationSeedDataOut] = None
+
+    model_config = ConfigDict(from_attributes=True)
 
 
 # ----------- Sample List Output Schemas -----------
@@ -93,16 +97,18 @@ class TranslationSampleCreate(BaseModel):
 # ----------- Annotation -----------
 
 class AnnotationSeedCreate(BaseModel):
-    image_url: str
-    annotation_text: str
+    file_name: str
+    hint: str
+    source: str
     category: Optional[str] = None
     active: Optional[bool] = True
+    id: uuid.UUID 
 
 
 class AnnotationSampleCreate(BaseModel):
     language_id: UUID4
     seed_data_id: UUID4
-    active: Optional[bool] = True
+    eval: Optional[bool] = True
 
 
 class BulkTranscriptionSampleUpload(BaseModel):

@@ -5,7 +5,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from crud.language import LanguageCrud, UserLanguageCrud, UserLanguageStatsCrud
 from pydantic import UUID4
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from sqlalchemy import select, func, text
 
 from models.challenge import Challenge, ChallengeStatus, TaskType
@@ -122,7 +122,7 @@ class StatService:
         }
 
         # Active users in the last 30 days
-        thirty_days_ago = datetime.utcnow() - timedelta(days=30)
+        thirty_days_ago = datetime.now(timezone.utc) - timedelta(days=30)
 
         # Get unique users who contributed to this language in the last 30 days
         translation_users = await self.db.execute(
@@ -302,7 +302,7 @@ class StatService:
 
     async def _get_monthly_activity(self, language_id: UUID4) -> dict:
         """Get monthly activity data for the past 6 months"""
-        six_months_ago = datetime.utcnow() - timedelta(days=180)
+        six_months_ago = datetime.now(timezone.utc) - timedelta(days=180)
 
         # Use raw SQL for more complex time-based aggregation
         query = """

@@ -5,7 +5,7 @@ from crud.user import UserCrud
 from models.user import User
 from services.token_service import TokenService, verify_password, get_password_hash
 from sqlmodel import select
-from datetime import datetime
+from datetime import datetime, timezone
 from schemas.language import UserLanguageStatsUpdate
 
 
@@ -172,7 +172,7 @@ class UserService:
         user.total_annotation_tokens += stats_data.total_annotation_tokens
 
         # Update user's timestamp
-        user.updated_at = datetime.utcnow()
+        user.updated_at = datetime.now(timezone.utc)
 
         # Save changes
         self.db.add(user)
@@ -191,6 +191,7 @@ class UserService:
         Returns:
             Dictionary containing user statistics
         """
+        
         user = await self.get_detailed_user_by_id(user_id)
         if not user:
             raise HTTPException(

@@ -24,18 +24,7 @@ from models import (
 
 import logging
 
-# Set up logging
-logging.basicConfig(
-    level=logging.DEBUG,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    handlers=[
-        logging.StreamHandler(),  # Print to console
-        logging.FileHandler('evaluation_service.log')  # Save to file
-    ]
-)
-
-# Create a logger specific to this module
-logger = logging.getLogger("evaluation_service")
+logger = logging.getLogger("my_app")
 
 
 from schemas.contribution import (
@@ -80,7 +69,9 @@ class EvaluationService:
             sample_id: uuid.UUID,
             contribution_type: str,
             num_branches: int = 2,
+
     ) -> EvaluationInstance:
+
         """
         Initialize an evaluation instance for a given sample.
 
@@ -93,6 +84,7 @@ class EvaluationService:
             The created EvaluationInstance
         """
         try:
+
             # Define pipe depths based on contribution type
             pipe_depths = {
                 "annotation": settings.ANNOTATION_PIPE_DEPTH,
@@ -105,24 +97,6 @@ class EvaluationService:
             if contribution_type not in self.task_type:
                 raise ValueError(f"Invalid contribution type: {contribution_type}")
 
-            # Create the evaluation instance
-            instance_data = {
-                "num_branches": num_branches,
-                "is_complete": False,
-                "num_completed_branches": 0
-            }
-
-            instance = EvaluationInstance(**instance_data)
-            self.db.add(instance)
-            
-            try:
-                await self.db.commit()
-                await self.db.refresh(instance)
-            except Exception as commit_error:
-                print(f"Error committing evaluation instance: {str(commit_error)}")
-                await self.db.rollback()
-                raise
-
             # Link the sample to the instance
             _, sample_model = await self._get_models(contribution_type)
 
@@ -131,12 +105,28 @@ class EvaluationService:
 
             if not sample:
                 raise ValueError(f"No sample found with ID {sample_id} for {contribution_type}")
-
-            # Ensure sample isn't already linked to an evaluation instance
+            
             if sample.evaluation_instance_id:
-                raise ValueError(f"Sample with ID {sample_id} is already linked to an evaluation instance")
+                raise ValueError(f"Sample: {sample.id}already has an eval instance {sample.evaluation_instance_id}")
 
+
+            # Create the evaluation instance
+            instance_data = {
+                "num_branches": num_branches,
+                "is_complete": False,
+                "num_completed_branches": 0
+            }
+
+            instance = EvaluationInstance(**instance_data)
+
+            # Make instance
+            self.db.add(instance)
+            await self.db.commit()
+            await self.db.refresh(instance)
+
+            # Update samples(Active and associate instance id)
             sample.evaluation_instance_id = instance.id
+            sample.eval = True
             self.db.add(sample)
 
             from services.contribution_service import ContributionManagementService
@@ -154,6 +144,8 @@ class EvaluationService:
             )
 
             if len(contributions) < num_branches:
+                logger.warning(
+                    f"Not enough contributions ({len(contributions)}) for requested branches ({num_branches}) for sample {sample_id}")
                 raise ValueError("Not enough contributions to create the requested number of branches")
 
             contribution_ids = [str(c.id) for c in contributions]
@@ -168,6 +160,7 @@ class EvaluationService:
                     is_complete=False
                 )
                 self.db.add(branch)
+                await self.db.flush()  # Ensure branch.id is populated before using it
 
                 # Create initial evaluation step
                 step = EvaluationStep(
@@ -179,32 +172,19 @@ class EvaluationService:
                 )
                 self.db.add(step)
 
-            try:
-                await self.db.commit()
-            except Exception as commit_error:
-                print(f"Error committing branches and steps: {str(commit_error)}")
-                await self.db.rollback()
-                raise
+            await self.db.commit()
+
+            await self.db.refresh(instance)  # force full refresh
 
             # Refresh instance to get created branches
-            try:
-                stmt = select(EvaluationInstance).where(EvaluationInstance.id == instance.id).options(
-                    selectinload(EvaluationInstance.evaluation_branches).selectinload(EvaluationBranch.evaluation_steps)
-                )
-                result = await self.db.execute(stmt)
-                instance = result.scalars().first()
-            except Exception as refresh_error:
-                print(f"Error refreshing instance: {str(refresh_error)}")
-                # Continue anyway with the already created instance
-
+            stmt = select(EvaluationInstance).where(EvaluationInstance.id == instance.id).options(
+                selectinload(EvaluationInstance.evaluation_branches).selectinload(EvaluationBranch.evaluation_steps)
+            )
+            result = await self.db.execute(stmt)
+            instance = result.scalars().first()
             return instance
-            
+
         except Exception as e:
-            print(f"Error in create_evaluation_instance: {str(e)}")
-            try:
-                await self.db.rollback()
-            except:
-                pass
             raise ValueError(f"Error creating evaluation instance: {str(e)}")
 
     # =========== Managing Evaluation Steps ==========
@@ -212,10 +192,12 @@ class EvaluationService:
             self,
             branch_id: uuid.UUID,
             instance_id: uuid.UUID,
+            step_id: uuid.UUID,
             language_id: uuid.UUID,
             user_id: uuid.UUID,
             contribution_type: str,
             eval_decision: Optional[bool] = None,
+            abtest_decision: Optional[str] = None,
             correction_id: Optional[uuid.UUID] = None,
             run_abtest: bool = False,
     ) -> bool:
@@ -223,13 +205,12 @@ class EvaluationService:
         Submit and progress an evaluation step in a branch.
         Returns:
             True if submission was successful
-
         """
         if eval_decision is None:
             # Treat as a skipped evaluation — no stat increment or contribution change
             pass
 
-        # 1. Get the branch and check for completion
+        # 1. Get the branch and check for completiond
         branch = await self.get_branch(branch_id)
 
         # 2. Handle contribution resolution
@@ -237,15 +218,19 @@ class EvaluationService:
         cms = ContributionManagementService(self.db)
 
         # 3. Get the result of the possible abtest
-        eval_step = await self.get_evaluation_step(branch_id)
-        if eval_step.abtest_decision == "a":
-            await cms.unpackPoints(eval_step.b_contribution_id, contribution_type)
+        eval_step = await self.get_evaluation_step(step_id)
+
+
+        if abtest_decision == "a":
             advancing_contribution = eval_step.a_contribution_id
-        elif eval_step.abtest_decision == "b":
-            await cms.unpackPoints(eval_step.a_contribution_id, contribution_type)
+        elif abtest_decision == "b":
+            advancing_contribution = eval_step.b_contribution_id
+        elif abtest_decision is None:
+            # Treat as default fallback to B — log it just in case
+            # logger.warning("No A/B test decision found; defaulting to B contribution.")
             advancing_contribution = eval_step.b_contribution_id
         else:
-            raise ValueError("Invalid A/B test decision in evaluation Service")
+            raise ValueError(f"Invalid A/B test decision: {abtest_decision}")
 
         # 4. check if the advancing contribution is accepted or correction is made - if so then run abtest in next step
         if eval_decision is False:
@@ -257,6 +242,9 @@ class EvaluationService:
             # Init abtest
             run_abtest = True
         else:
+            # credits ancestor contributors with points
+            await cms.unpackPoints(eval_step.b_contribution_id, language_id= language_id, contribution_type = contribution_type)
+
             await cms.update_ancestors(advancing_contribution, contribution_type, user_id)
 
         # 3. Mark current head step as complete and not head
@@ -272,30 +260,22 @@ class EvaluationService:
                 head=False,
                 is_complete=True,
                 evaluation_decision=eval_decision,
-                abtest_decision=eval_step.abtest_decision,
+                abtest_decision= abtest_decision,
                 next_alt_contribution_id=correction_id
             )
         )
 
         # Prepare next step or finish instance
-        if branch.is_complete:
-
-            # 4. Upack points for the advancing contribution and possibly last correction
-
-            if correction_id:
-                await cms.unpackPoints(correction_id, contribution_type)
-
-            await cms.unpackPoints(advancing_contribution, contribution_type)
-
-            # 5. Check if instance is complete
-
-            await self._check_instance_completion(instance_id)
-
-        else:
-
-            # 6. Increment branch depth and create next evaluation step
-
+        if branch.depth + 1>= settings.EVAL_INSTANCE_DEPTH:
             branch.depth += 1
+            branch.is_complete = True
+            # 5. Check if instance is complete
+            await self._check_instance_completion(instance_id)
+        else:
+            # 6. Increment branch depth and create next evaluation step
+            branch.depth += 1
+            if branch.depth >= settings.EVAL_INSTANCE_DEPTH:
+                branch.is_complete = True
             next_step = EvaluationStep(
                 branch_id=branch.id,
                 instance_id=instance_id,
@@ -312,24 +292,28 @@ class EvaluationService:
         # Update evaluator stats
         from services.language_service import LanguageService
         language_service = LanguageService(self.db)
-        from services.challenge_service import ChallengeService
 
         eval_stats = ParticipationUpdate(
             is_evaluation=True
         )
 
+        instance = await  self.get_evaluation_instance(instance_id=instance_id)
+
         # Update challenge participation stats
-        if branch.event_id:
+        if instance.challenge_id:
+            from services.challenge_service import ChallengeService
             challenge_service = ChallengeService(self.db)
             await challenge_service.update_participation_stats(
-                event_id=branch.event_id,
+                event_id=instance.challenge_id,
                 user_id=user_id,
                 stats_data=eval_stats,
             )
-        await language_service.user_language_repository.update_language_stats(
+
+        await language_service.user_language_stats_repository.update_stats(
             user_id=user_id,
             language_id=language_id,
             stats_data=eval_stats,
+            task_type = contribution_type
         )
 
         # Commit everything
@@ -350,7 +334,7 @@ class EvaluationService:
 
             return step
         except Exception as e:
-            print(f"Error in get_evaluation_step: {str(e)}")
+            logger.exception(f"Error in get_evaluation_step: {str(e)}")
             raise ValueError(f"Error retrieving evaluation step: {str(e)}")
 
     async def _check_instance_completion(self, instance_id: uuid.UUID) -> bool:
@@ -369,7 +353,7 @@ class EvaluationService:
             raise ValueError(f"Evaluation instance {instance_id} not found")
 
         # Check if all branches are complete
-        all_complete = all(branch.complete for branch in instance.branches)
+        all_complete = all(branch.is_complete for branch in instance.evaluation_branches)
 
         if all_complete and not instance.is_complete:
             instance.is_complete = True
@@ -394,7 +378,7 @@ class EvaluationService:
         stmt = (
             select(EvaluationInstance)
             .where(EvaluationInstance.id == instance_id)
-            .options(selectinload(EvaluationInstance.branches))
+            .options(selectinload(EvaluationInstance.evaluation_branches))
         )
 
         result = await self.db.execute(stmt)
@@ -410,7 +394,7 @@ class EvaluationService:
         stmt = (
             select(EvaluationBranch)
             .where(EvaluationBranch.id == branch_id)  # type: ignore
-            .options(selectinload(EvaluationBranch.steps))
+            .options(selectinload(EvaluationBranch.evaluation_steps))
         )
 
         result = await self.db.execute(stmt)
@@ -418,7 +402,7 @@ class EvaluationService:
         # Check if branch exists
         if not branch:
             raise ValueError(f"Branch with ID {branch_id} not found")
-        if branch.complete:
+        if branch.is_complete:
             raise ValueError(f"Branch {branch_id} is already complete")
 
         return branch
@@ -432,6 +416,7 @@ class EvaluationService:
             challenge_id: Optional[uuid.UUID] = None,
             language_id: Optional[uuid.UUID] = None,
             num_steps: int = 1,
+            buffered_instances: List[uuid.UUID] = []
     ) -> List[dict]:
         """
         Assign evaluation steps to a user based on their proficiency level.
@@ -440,17 +425,24 @@ class EvaluationService:
         try:
             assignments = []
             steps_assigned = 0
-            
+
             # Try to get and assign existing branches first
             try:
+
                 # Get candidate branches with head steps
-                branches = await self._get_candidate_branches_with_head_steps()
-                
+                branches = await self._get_candidate_branches_with_head_steps(buffered_instances= buffered_instances)
+
+                logging.debug(f"Initial branches: {branches}")
+
                 # Filter out branches where user has already participated
                 filtered_branches = filter_user_participated(branches, user_id)
-                
+
+                logging.debug(f"filtered branches: {filtered_branches}")
+
                 # Prioritize branches based on user's proficiency
                 prioritized = prioritize_branches(filtered_branches, proficiency_level)
+
+                logging.debug(f"Prioritized branches: {prioritized}")
 
                 # 1. Assign from existing prioritized branches
                 for branch in prioritized:
@@ -460,15 +452,16 @@ class EvaluationService:
                     # Assign or create step for this branch
                     try:
                         step = await self._assign_or_create_step(user_id, branch)
-                    
+
                         # Get basic step data
                         step_data = {
                             "step_id": str(step.id),
                             "branch_id": str(branch.id),
+                            "instance_id": str(branch.instance_id),
                             "head": step.head,
                             "assigned_at": step.assigned_at
                         }
-                        
+
                         # Get contribution data in a separate try block
                         try:
                             step_with_contributions = await self.get_evaluation_step_with_contributions(
@@ -476,8 +469,9 @@ class EvaluationService:
                                 contribution_type=contribution_type
                             )
                             step_data["contributions"] = step_with_contributions.get("contributions", {})
+
                         except Exception as contrib_error:
-                            print(f"Error getting contributions for step {step.id}: {str(contrib_error)}")
+                            logger.exception(f"Error getting contributions for step {step.id}: {str(contrib_error)}")
                             step_data["contributions"] = {}
                             step_data["contribution_error"] = str(contrib_error)
 
@@ -491,41 +485,49 @@ class EvaluationService:
                             "note": "Assigned from existing branch",
                             "step_data": step_data
                         })
+
                         steps_assigned += 1
+
                     except Exception as e:
-                        print(f"Error assigning step for branch {branch.id}: {str(e)}")
+
+                        logger.exception(f"Error assigning step for branch {branch.id}: {str(e)}")
                         continue
+
             except Exception as branch_error:
-                print(f"Error assigning from existing branches: {str(branch_error)}")
+                
+                logger.exception(f"Error assigning from existing branches: {str(branch_error)}")
                 # Continue to try creating new instances
 
             # 2. If not enough steps assigned, create new evaluation instances
             if steps_assigned < num_steps:
                 remaining = num_steps - steps_assigned
+                precreate_count = max(remaining * 2, 10)  # or just hardcode 15
+
 
                 try:
                     # Get the appropriate model for the contribution type
                     _, model = self.task_type[contribution_type]
-                    
+
                     # Import and instantiate SampleDataService
                     from services.sample_data_service import SampleDataService
                     sample_data_service = SampleDataService(self.db)
-                    
+
                     # Get sample IDs for evaluation
                     sample_ids = await sample_data_service.find_samples_for_user(
                         user_id=user_id,
                         contribution_type=contribution_type,
                         language_id=language_id,
-                        limit=remaining,
+                        limit=precreate_count,
+                        evaluation_mode=True,
                     )
 
-
+                    logger.debug(f"find_samples_for_user returned: {sample_ids}")
 
                     if not sample_ids:
-                        if not assignments:  # If we haven't assigned anything yet
-                            raise ValueError("No samples available for evaluation")
-                        return assignments
-                        
+                        logger.info("No samples available for evaluation. Returning empty assignment list.")
+                        return {"assignments": assignments}
+
+
                     # Create new evaluation instances for each sample
                     for sample_id in sample_ids:
                         try:
@@ -533,78 +535,75 @@ class EvaluationService:
                             instance = await self.create_evaluation_instance(
                                 sample_id=sample_id,
                                 contribution_type=contribution_type,
-                                num_branches=2,  # Use minimum branches to speed up creation
+                                num_branches=settings.EVAL_INSTANCE_WIDTH,  # Use minimum branches to speed up creation
                             )
-                            logger.info(f"sample ids{instance}")
-                            logger.debug(f"sample ids{contribution_type}")
-                            
+
                             # Access the first branch and its first evaluation step
                             if hasattr(instance, 'branches'):
-                                branch = instance.branches[0]
+                                branch = instance.evaluation_branches[0]
                                 step = branch.steps[0] if hasattr(branch, 'steps') else branch.evaluation_steps[0]
                             else:
                                 branch = instance.evaluation_branches[0]
                                 step = branch.evaluation_steps[0]
-                            
+
                             # Assign step to user
-                            step.user_id = user_id
-                            step.assigned_at = datetime.utcnow()
-                            
+                            # step.user_id = user_id
+                            # step.assigned_at = datetime.now(timezone.utc)
+
+                            if steps_assigned < num_steps:
+                                step.user_id = user_id
+                                step.assigned_at = datetime.now(timezone.utc)
+                                assigned_now = True
+                            else:
+                                assigned_now = False
+
                             # Commit changes to database
-                            try:
-                                await self.db.commit()
-                                await self.db.refresh(step)
-                            except Exception as commit_error:
-                                print(f"Error committing step assignment: {str(commit_error)}")
-                                await self.db.rollback()
-                                continue
+                            await self.db.commit()
+                            await self.db.refresh(step)
 
                             # Create basic step data
-                            step_data = {
-                                "step_id": str(step.id),
-                                "branch_id": str(branch.id),
-                                "head": step.head,
-                                "assigned_at": step.assigned_at
-                            }
-                            
-                            # Get contribution data in a separate try block
-                            try:
+                            if assigned_now:
+                                step_data = {
+                                    "step_id": str(step.id),
+                                    "branch_id": str(branch.id),
+                                    "instance_id": str(branch.instance_id),
+                                    "head": step.head,
+                                    "assigned_at": step.assigned_at,
+                                }
+
+                                # Get contribution data in a separate try block
                                 step_with_contributions = await self.get_evaluation_step_with_contributions(
                                     step_id=step.id,
                                     contribution_type=contribution_type
                                 )
                                 step_data["contributions"] = step_with_contributions.get("contributions", {})
-                            except Exception as contrib_error:
-                                print(f"Error getting contributions for step {step.id}: {str(contrib_error)}")
-                                step_data["contributions"] = {}
-                                step_data["contribution_error"] = str(contrib_error)
 
-                            assignments.append({
-                                "task_type": "evaluation_step",
-                                "branch_id": str(branch.id),
-                                "depth": 1,
-                                "max_depth": branch.max_depth,
-                                "step_id": str(step.id),
-                                "head": step.head if hasattr(step, 'head') else True,
-                                "note": "New evaluation instance created",
-                                "step_data": step_data
-                            })
+                                assignments.append({
+                                    "task_type": "evaluation_step",
+                                    "branch_id": str(branch.id),
+                                    "depth": 1,
+                                    "max_depth": branch.max_depth,
+                                    "step_id": str(step.id),
+                                    "head": step.head if hasattr(step, 'head') else True,
+                                    "note": "New evaluation instance created",
+                                    "step_data": step_data
+                                })
 
-                            steps_assigned += 1
+                                steps_assigned += 1
+                                
                             if steps_assigned >= num_steps:
                                 break
                         except Exception as e:
-                            print(f"Error creating evaluation instance for sample {sample_id}: {str(e)}")
+                            logger.exception(f"Error creating evaluation instance for sample {sample_id}: {str(e)}")
                             continue
                 except Exception as e:
-                    print(f"Error getting samples: {str(e)}")
                     if not assignments:  # If we haven't assigned anything yet
                         raise ValueError(f"Error getting samples: {str(e)}")
 
-            return assignments
-            
+            return {"assignments": assignments}
+
         except Exception as e:
-            print(f"Error in assign_evaluation_step_to_user: {str(e)}")
+            logger.exception(f"Error in assign_evaluation_step_to_user: {str(e)}")
             raise ValueError(f"Error assigning evaluation steps: {str(e)}")
 
     async def get_evaluation_step_with_contributions(
@@ -642,7 +641,7 @@ class EvaluationService:
                     )
                     contributions["b_contribution"] = b_contribution
                 except Exception as e:
-                    print(f"Error fetching b_contribution: {str(e)}")
+                    logger.exception(f"Error fetching b_contribution: {str(e)}")
                     contributions["b_contribution"] = None
 
             # Fetch the alternative contribution (a_contribution) if present
@@ -654,11 +653,11 @@ class EvaluationService:
                     )
                     contributions["a_contribution"] = a_contribution
                 except Exception as e:
-                    print(f"Error fetching a_contribution: {str(e)}")
+                    logger.exception(f"Error fetching a_contribution: {str(e)}")
                     contributions["a_contribution"] = None
 
-            # Fetch the next alternative contribution if present
-            if step.next_alt_contribution_id:
+            # # Fetch the next alternative contribution if present
+            # if step.next_alt_contribution_id:
                 try:
                     next_alt_contribution = await contribution_service.get_contribution(
                         step.next_alt_contribution_id,
@@ -666,7 +665,7 @@ class EvaluationService:
                     )
                     contributions["next_alt_contribution"] = next_alt_contribution
                 except Exception as e:
-                    print(f"Error fetching next_alt_contribution: {str(e)}")
+                    logger.exception(f"Error fetching next_alt_contribution: {str(e)}")
                     contributions["next_alt_contribution"] = None
 
             # Build the response object with minimal database access
@@ -681,18 +680,23 @@ class EvaluationService:
             }
 
             return step_data
-            
+
         except Exception as e:
-            print(f"Error in get_evaluation_step_with_contributions: {str(e)}")
+            logger.exception(f"Error in get_evaluation_step_with_contributions: {str(e)}")
             # Return a minimal response with error information
             return {
                 "step_id": str(step_id),
                 "error": str(e),
                 "contributions": {}
             }
-
+    
     async def _get_candidate_branches_with_head_steps(
-            self
+        self,
+        user_id: uuid.UUID,
+        proficiency: int,
+        contribution_type: str,
+        buffered_instances: Optional[List[uuid.UUID]] = [],
+        limit: int = 20
     ) -> List[EvaluationBranch]:
         try:
             stmt = (
@@ -701,7 +705,7 @@ class EvaluationService:
                 .join(EvaluationStep)
                 .options(
                     selectinload(EvaluationBranch.evaluation_steps),
-                    selectinload(EvaluationBranch.evaluation_instance),
+                    selectinload(EvaluationBranch.evaluation_instance).selectinload(EvaluationInstance.evaluation_branches),
                 )
                 .where(EvaluationBranch.is_complete == False)
                 .where(EvaluationInstance.is_complete == False)
@@ -711,18 +715,56 @@ class EvaluationService:
                         EvaluationStep.is_complete == False,
                         or_(
                             EvaluationStep.user_id.is_(None),
-                            EvaluationStep.assigned_at < datetime.utcnow() - timedelta(minutes=45)
+                            EvaluationStep.assigned_at < datetime.now(timezone.utc) - timedelta(minutes=45)
                         )
                     )
                 )
+                .order_by(EvaluationBranch.depth.asc())
+                .limit(limit)
             )
+
+            if buffered_instances:
+                stmt = stmt.where(EvaluationInstance.id.notin_(buffered_instances))
+
             result = await self.db.execute(stmt)
             branches: List[EvaluationBranch] = result.scalars().unique().all()
-            return branches
+
+            filtered = []
+            seen_instances = set()
+
+            for branch in branches:
+                instance = branch.evaluation_instance
+
+                if instance.id in seen_instances:
+                    continue  # Already selected a branch from this instance
+
+                # Skip if user already involved in this instance
+                if str(user_id) in (instance.ancestors or []):
+                    continue
+
+                if any(step.user_id == user_id for b in instance.evaluation_branches for step in b.evaluation_steps):
+                    continue
+
+                # Depth gating
+                relative_depth = branch.depth / (branch.max_depth or 1)
+                allowed_max_depth = min(0.2 + 0.08 * proficiency, 1.0)
+
+                if relative_depth > allowed_max_depth:
+                    continue
+
+                filtered.append(branch)
+                seen_instances.add(instance.id)
+
+            # Prioritize: shallow-to-deep or deep-to-shallow
+            reverse = proficiency >= settings.EVALUATOR_PROFICIENCY_THRESHOLD
+            prioritized = sorted(filtered, key=lambda b: b.depth / (b.max_depth or 1), reverse=reverse)
+
+            return prioritized
+
         except Exception as e:
-            print(f"Error in _get_candidate_branches_with_head_steps: {str(e)}")
-            # Return an empty list instead of raising an error
+            logger.exception(f"Error in _get_candidate_branches_with_head_steps: {str(e)}")
             return []
+
 
     async def _assign_or_create_step(
             self,
@@ -735,12 +777,12 @@ class EvaluationService:
             # Reassign if unassigned or expired
             if head_step and (head_step.user_id is None or is_expired(head_step)):
                 head_step.user_id = user_id
-                head_step.assigned_at = datetime.utcnow()
+                head_step.assigned_at = datetime.now(timezone.utc)
                 try:
                     await self.db.commit()
                     await self.db.refresh(head_step)
                 except Exception as commit_error:
-                    print(f"Error committing head_step assignment: {str(commit_error)}")
+                    logger.exception(f"Error committing head_step assignment: {str(commit_error)}")
                     # Try to roll back if possible
                     try:
                         await self.db.rollback()
@@ -756,14 +798,14 @@ class EvaluationService:
                 head=False,
                 is_complete=False,
                 is_approved=False,
-                assigned_at=datetime.utcnow()
+                assigned_at=datetime.now(timezone.utc)
             )
             try:
                 self.db.add(new_step)
                 await self.db.commit()
                 await self.db.refresh(new_step)
             except Exception as commit_error:
-                print(f"Error committing new step creation: {str(commit_error)}")
+                logger.exception(f"Error committing new step creation: {str(commit_error)}")
                 # Try to roll back if possible
                 try:
                     await self.db.rollback()
@@ -772,7 +814,7 @@ class EvaluationService:
                 raise
             return new_step
         except Exception as e:
-            print(f"Error in _assign_or_create_step: {str(e)}")
+            logger.exception(f"Error in _assign_or_create_step: {str(e)}")
             raise ValueError(f"Error assigning step: {str(e)}")
 
     async def select_top_contributions(
@@ -838,6 +880,7 @@ class EvaluationService:
                 top_contributions.append(contribution)
 
         return top_contributions
+
 
     # =========== A/B Testing ==========
     async def init_ab_test(
@@ -978,7 +1021,7 @@ class EvaluationService:
             pair_id=pair.id,
             user_id=user_id,
             selected_contribution_ids=selected_contribution_ids,
-            vote_submitted_at=datetime.utcnow()
+            vote_submitted_at=datetime.now(timezone.utc)
         )
         self.db.add(vote)
         await self.db.commit()
@@ -1137,8 +1180,9 @@ class EvaluationService:
             self,
             user_id: uuid.UUID,
             proficiency_level: int = 1,
-            ab_test_id: uuid.UUID = None
-    ) -> Dict[str, Any]:
+            ab_test_id: uuid.UUID = None,
+            batch_size: int = 3
+    ) -> List[Dict[str, Any]]:
         """
         Assign an A/B test comparison to a user with randomization.
 
@@ -1157,10 +1201,10 @@ class EvaluationService:
             ab_test = await self.get_ab_test(ab_test_id)
 
         if ab_test.is_complete:
-            return {
+            return [ {
                 "error": "A/B test is already complete",
                 "final_winners": ab_test.final_winner_id
-            }
+            }]
 
         # Get pairs from the current stage that haven't been completed
         current_stage = ab_test.current_stage
@@ -1188,14 +1232,28 @@ class EvaluationService:
         from datetime import datetime, timezone
 
         TTE_SECONDS = getattr(settings, "TTE", 72000)  # Default to 1 hour if not set
+
+        results = []
+        count = 0
+        now = datetime.now(timezone.utc)
+
+        
+        from services.contribution_service import ContributionManagementService
+        contribution_management_service = ContributionManagementService(self.db)
+
         for pair in pairs:
+
+            if count >= batch_size:
+                break
+
             # Check if this user has already voted on this pair
             user_voted = any(vote.user_id == user_id for vote in pair.votes)
+
             if user_voted:
                 continue
 
             # Check for stale votes (assigned but not completed, and TTE expired)
-            now = datetime.now(timezone.utc)
+            
             stale_vote = None
             for vote in pair.votes:
                 if (
@@ -1205,18 +1263,17 @@ class EvaluationService:
                     stale_vote = vote
                     break
 
-            from services.contribution_service import ContributionManagementService
-            contribution_management_service = ContributionManagementService(self.db)
-
             # Get the contribution content
             contribution_a = await contribution_management_service.get_contribution(
                 pair.contribution_a_id,
                 ab_test.contribution_type
             )
+
             contribution_b = await contribution_management_service.get_contribution(
                 pair.contribution_b_id,
                 ab_test.contribution_type
             )
+
             if not contribution_a or not contribution_b:
                 continue
 
@@ -1224,6 +1281,7 @@ class EvaluationService:
                 if hasattr(c, "text"):
                     return c.text
                 return str(c.id)
+            
 
             # If there is a stale vote, reassign it
             if stale_vote:
@@ -1247,8 +1305,8 @@ class EvaluationService:
                     a_shown_first=a_shown_first
                 )
                 self.db.add(vote)
-                await self.db.commit()
-                await self.db.refresh(vote)
+            await self.db.commit()
+            await self.db.refresh(vote)
 
             first_contribution = {
                 "id": str(pair.contribution_a_id if a_shown_first else pair.contribution_b_id),
@@ -1258,7 +1316,7 @@ class EvaluationService:
                 "id": str(pair.contribution_b_id if a_shown_first else pair.contribution_a_id),
                 "content": get_content(contribution_b if a_shown_first else contribution_a)
             }
-            return {
+            results.append({
                 "ab_test_id": str(ab_test_id),
                 "pair_id": str(pair.id),
                 "vote_id": str(vote.id),
@@ -1266,13 +1324,12 @@ class EvaluationService:
                 "option_a": first_contribution,
                 "option_b": second_contribution,
                 "a_shown_first": a_shown_first  # For tracking presentation bias
-            }
+            })
+
+            count += 1
 
         # If we get here, the user has voted on all available pairs
-        return {
-            "error": "No available pairs for voting",
-            "suggestion": "Try advancing the test to the next stage if all votes are in"
-        }
+        return results
 
     async def submit_ab_test_result(
             self,
