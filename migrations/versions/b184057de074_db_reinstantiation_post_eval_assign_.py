@@ -1,8 +1,8 @@
-"""database init
+"""db reinstantiation post-eval assign refactor
 
-Revision ID: df5b6b2b7656
+Revision ID: b184057de074
 Revises: 
-Create Date: 2025-07-03 01:28:24.861281
+Create Date: 2025-07-06 22:56:20.278140
 
 """
 from typing import Sequence, Union
@@ -13,7 +13,7 @@ import sqlmodel
 from sqlalchemy.dialects import postgresql
 
 # revision identifiers, used by Alembic.
-revision: str = 'df5b6b2b7656'
+revision: str = 'b184057de074'
 down_revision: Union[str, None] = None
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
@@ -238,6 +238,7 @@ def upgrade() -> None:
     sa.Column('num_branches', sa.Integer(), nullable=False),
     sa.Column('challenge_id', sa.Uuid(), nullable=True),
     sa.Column('is_complete', sa.Boolean(), nullable=False),
+    sa.Column('ancestors', sa.JSON(), nullable=True),
     sa.ForeignKeyConstraint(['challenge_id'], ['challenge.id'], ),
     sa.PrimaryKeyConstraint('id')
     )

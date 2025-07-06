@@ -418,10 +418,12 @@ class EvaluationService:
             num_steps: int = 1,
             buffered_instances: List[uuid.UUID] = []
     ) -> List[dict]:
+        
         """
         Assign evaluation steps to a user based on their proficiency level.
         Prioritizes existing branches before creating new evaluation instances.
         """
+
         try:
             assignments = []
             steps_assigned = 0
@@ -430,22 +432,14 @@ class EvaluationService:
             try:
 
                 # Get candidate branches with head steps
-                branches = await self._get_candidate_branches_with_head_steps(buffered_instances= buffered_instances)
-
-                logging.debug(f"Initial branches: {branches}")
-
-                # Filter out branches where user has already participated
-                filtered_branches = filter_user_participated(branches, user_id)
-
-                logging.debug(f"filtered branches: {filtered_branches}")
-
-                # Prioritize branches based on user's proficiency
-                prioritized = prioritize_branches(filtered_branches, proficiency_level)
-
-                logging.debug(f"Prioritized branches: {prioritized}")
+                branches = await self._get_candidate_branches_with_head_steps(
+                    buffered_instances= buffered_instances,
+                    user_id=user_id,
+                    proficiency=proficiency_level
+                )
 
                 # 1. Assign from existing prioritized branches
-                for branch in prioritized:
+                for branch in branches:
                     if steps_assigned >= num_steps:
                         break
 
@@ -545,10 +539,6 @@ class EvaluationService:
                             else:
                                 branch = instance.evaluation_branches[0]
                                 step = branch.evaluation_steps[0]
-
-                            # Assign step to user
-                            # step.user_id = user_id
-                            # step.assigned_at = datetime.now(timezone.utc)
 
                             if steps_assigned < num_steps:
                                 step.user_id = user_id
@@ -728,36 +718,42 @@ class EvaluationService:
 
             result = await self.db.execute(stmt)
             branches: List[EvaluationBranch] = result.scalars().unique().all()
+            
 
-            filtered = []
-            seen_instances = set()
+            best_branch_per_instance = {}
 
             for branch in branches:
                 instance = branch.evaluation_instance
 
-                if instance.id in seen_instances:
-                    continue  # Already selected a branch from this instance
-
-                # Skip if user already involved in this instance
+                # Skip if user participated
                 if str(user_id) in (instance.ancestors or []):
                     continue
-
                 if any(step.user_id == user_id for b in instance.evaluation_branches for step in b.evaluation_steps):
                     continue
 
-                # Depth gating
                 relative_depth = branch.depth / (branch.max_depth or 1)
                 allowed_max_depth = min(0.2 + 0.08 * proficiency, 1.0)
-
                 if relative_depth > allowed_max_depth:
                     continue
 
-                filtered.append(branch)
-                seen_instances.add(instance.id)
+                # Store best branch per instance
+                key = instance.id
+                if key not in best_branch_per_instance:
+                    best_branch_per_instance[key] = branch
+                else:
+                    existing = best_branch_per_instance[key]
+                    # Compare proximity to ideal depth
+                    def score(b): return abs((b.depth / (b.max_depth or 1)) - allowed_max_depth)
+                    if score(branch) < score(existing):
+                        best_branch_per_instance[key] = branch
 
-            # Prioritize: shallow-to-deep or deep-to-shallow
-            reverse = proficiency >= settings.EVALUATOR_PROFICIENCY_THRESHOLD
-            prioritized = sorted(filtered, key=lambda b: b.depth / (b.max_depth or 1), reverse=reverse)
+            prioritized = sorted(
+                best_branch_per_instance.values(),
+                key=lambda b: b.depth / (b.max_depth or 1),
+                reverse=proficiency >= settings.EVALUATOR_PROFICIENCY_THRESHOLD
+            )
+
+            # logging.debug(f"Prioritized branches: {prioritized}")
 
             return prioritized
 
