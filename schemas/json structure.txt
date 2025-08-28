@@ -1,0 +1,75 @@
+// fixed
+
+cash
+{
+  "amount": 100,
+  "currency": "USD"
+}
+
+badges
+{
+  "badge_name": "Top Contributor",
+  "badge_description": "Awarded for top contributions.",
+  "badge icon": ""
+}
+
+swag
+{
+  "swag_item": "",
+  "swag_description": "Exclusive challenge t-shirt",
+  "token": "swag_token"
+}
+
+
+///////////
+
+
+{
+  "reward_distribution_type": "tiered",  // Distribution type (fixed or tiered)
+  "reward_value": {
+    "tier_1": {
+      "rank": 1,
+      "cash": {
+        "amount": 150, // 1st place reward
+        "currency": "USD"
+      },
+    },
+    "tier_2": {
+      "rank": 2,
+      "cash": {
+        "amount": 100, // 2nd place reward
+        "currency": "USD"
+      }
+    "tier_3": {
+      "rank": 3,
+      "cash": {
+        "amount": 50, // 3rd place reward
+        "currency": "USD"
+      }
+    }
+  },
+  "description": "Tiered rewards based on rank in the challenge."
+}
+ replace cash either other rewards if necessary based on the type we know how to parse it
+
+ /////////////////
+ {
+    description: "Everyone Wins",
+      cash: {
+        amount: 50,
+        currency: "USD"
+      },
+      badge:
+        {
+          badge_name: "Participation",
+          badge_icon: "icon_url",
+          badge_description: "Awarded for participation."
+        }
+      ,
+      swag: {
+        swag_item: "Challenge T-shirt",
+        swag_description: "Exclusive challenge t-shirt",
+        token: "swag_token"
+      }
+
+ }

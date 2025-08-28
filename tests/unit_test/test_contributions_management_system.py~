@@ -1,0 +1,214 @@
+import pytest
+from uuid import UUID, uuid4
+from datetime import datetime, timedelta
+from unittest.mock import AsyncMock, MagicMock
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import select
+from models import (
+    AnnotationContribution,
+    TranscriptionContribution,
+    TranslationContribution,
+    AnnotationSample,
+    TranscriptionSample,
+    TranslationSample
+)
+from schemas.contribution import (
+    ContributionCreate,
+    ContributionUpdate,
+    ContributionFilter
+)
+
+
+@pytest.fixture
+def mock_db():
+    db = AsyncMock(spec=AsyncSession)
+    db.execute = AsyncMock()
+    db.commit = AsyncMock()
+    db.refresh = AsyncMock()
+    return db
+
+
+@pytest.fixture
+def service(mock_db):
+    from services.contribution_management_service import ContributionManagementService
+    return ContributionManagementService(mock_db)
+
+
+@pytest.mark.asyncio
+async def test_create_contribution(service, mock_db):
+    user_id = uuid4()
+    sample_id = uuid4()
+    data = ContributionCreate(
+        target_text="Test text",
+        target_language_id=uuid4()
+    )
+
+    # Mock the execute response
+    mock_result = MagicMock()
+    mock_result.scalars.return_value.first.return_value = None
+    mock_db.execute.return_value = mock_result
+
+    # Test annotation contribution
+    contribution = await service.create_contribution(
+        user_id=user_id,
+        contribution_type="annotation",
+        sample_id=sample_id,
+        data=data
+    )
+
+    assert mock_db.add.called
+    assert mock_db.commit.called
+    assert isinstance(contribution, AnnotationContribution)
+
+
+@pytest.mark.asyncio
+async def test_get_contribution(service, mock_db):
+    contribution_id = uuid4()
+    mock_contribution = AnnotationContribution(id=contribution_id)
+
+    # Mock the execute response
+    mock_result = MagicMock()
+    mock_result.scalars.return_value.first.return_value = mock_contribution
+    mock_db.execute.return_value = mock_result
+
+    result = await service.get_contribution(
+        contribution_id=contribution_id,
+        contribution_type="annotation"
+    )
+
+    assert result.id == contribution_id
+
+
+@pytest.mark.asyncio
+async def test_list_contributions(service, mock_db):
+    # Mock the execute response
+    mock_contributions = [
+        AnnotationContribution(id=uuid4()),
+        AnnotationContribution(id=uuid4())
+    ]
+    mock_result = MagicMock()
+    mock_result.scalars.return_value.all.return_value = mock_contributions
+    mock_db.execute.return_value = mock_result
+
+    filters = ContributionFilter(
+        user_id=uuid4(),
+        active=True,
+        created_after=datetime.now() - timedelta(days=7)
+    )
+
+    results = await service.list_contributions(
+        contribution_type="annotation",
+        filters=filters,
+        skip=0,
+        limit=10
+    )
+
+    assert len(results) == 2
+    assert mock_db.execute.called
+
+
+@pytest.mark.asyncio
+async def test_update_contribution(service, mock_db):
+    contribution_id = uuid4()
+    mock_contribution = AnnotationContribution(id=contribution_id)
+
+    # Mock get_contribution
+    mock_result = MagicMock()
+    mock_result.scalars.return_value.first.return_value = mock_contribution
+    mock_db.execute.return_value = mock_result
+
+    update_data = ContributionUpdate(
+        flagged=True,
+        passed=True
+    )
+
+    result = await service.update_contribution(
+        contribution_id=contribution_id,
+        contribution_type="annotation",
+        data=update_data
+    )
+
+    assert result.flagged is True
+    assert result.passed is True
+    assert mock_db.commit.called
+
+
+@pytest.mark.asyncio
+async def test_get_user_contributions(service, mock_db):
+    user_id = uuid4()
+    mock_contributions = [
+        AnnotationContribution(id=uuid4(), user_id=user_id),
+        TranscriptionContribution(id=uuid4(), user_id=user_id)
+    ]
+
+    # Mock the execute response
+    mock_result = MagicMock()
+    mock_result.scalars.return_value.all.return_value = mock_contributions
+    mock_db.execute.return_value = mock_result
+
+    results = await service.get_user_contributions(
+        user_id=user_id,
+        contribution_type="annotation"
+    )
+
+    assert len(results) == 2
+
+
+@pytest.mark.asyncio
+async def test_get_contribution_stats(service, mock_db):
+    user_id = uuid4()
+
+    # Mock count queries
+    mock_count_result = MagicMock()
+    mock_count_result.scalar.return_value = 5
+    mock_db.execute.return_value = mock_count_result
+
+    stats = await service.get_contribution_stats(
+        user_id=user_id,
+        contribution_type="annotation"
+    )
+
+    assert stats.total_contributions == 5
+
+
+@pytest.mark.asyncio
+async def test_find_samples_for_user(service, mock_db):
+    user_id = uuid4()
+    language_id = uuid4()
+
+    # Mock sample query
+    mock_sample = MagicMock()
+    mock_sample.scalars.return_value = [uuid4(), uuid4()]
+    mock_db.execute.return_value = mock_sample
+
+    samples = await service.find_samples_for_user(
+        user_id=user_id,
+        contribution_type="annotation",
+        language_id=language_id,
+        limit=2
+    )
+
+    assert len(samples) == 2
+
+
+@pytest.mark.asyncio
+async def test_create_custom_contribution(service, mock_db):
+    user_id = uuid4()
+    language_id = uuid4()
+
+    # Mock all the nested calls
+    mock_sample = MagicMock()
+    mock_sample.id = uuid4()
+    mock_db.execute.return_value = MagicMock()
+    mock_db.commit.return_value = None
+
+    # This would need more extensive mocking for the full flow
+    # For now just testing it doesn't error
+    result = await service.create_custom_contribution(
+        user_id=user_id,
+        language_id=language_id,
+        contribution_data={"transcription_text": "test", "target_url": "http://test.com"},
+        contribution_type="transcription"
+    )
+
+    assert "sample_id" in result

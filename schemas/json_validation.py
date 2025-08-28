@@ -1,0 +1,36 @@
+from pydantic import BaseModel, Field, validator
+from typing import List, Dict
+import uuid
+
+
+class EvaluationStepData(BaseModel):
+    step_id: uuid.UUID = Field(default_factory=uuid.uuid4)
+    contribution_id: uuid.UUID
+    complete: bool = False
+
+
+class EvaluationBranchData(BaseModel):
+    branch_id: uuid.UUID = Field(default_factory=uuid.uuid4)
+    current_contribution_id: uuid.UUID
+    depth: int = Field(default=0, ge=0)
+    complete: bool = False
+    steps: List[EvaluationStepData] = Field(default_factory=list)
+
+    @validator("depth")
+    def depth_within_limit(cls, v):
+        if v < 0:
+            raise ValueError("Depth must be non-negative")
+        return v
+
+
+class EvaluationTreeData(BaseModel):
+    __root__: List[EvaluationBranchData]
+
+
+class ABTestStage(BaseModel):
+    stage: int
+    users: Dict[str, str]  # user_id -> contribution_id
+
+
+class ABTestData(BaseModel):
+    stages: List[ABTestStage]

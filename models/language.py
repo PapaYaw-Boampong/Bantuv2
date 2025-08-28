@@ -1,26 +1,60 @@
-from sqlmodel import SQLModel, Field, Relationship
+import uuid
+from sqlmodel import SQLModel, Field, Relationship, Column, DateTime
 from typing import List, Optional
-from user import User
-from contribution import Contribution
+from typing import TYPE_CHECKING
+from datetime import datetime
+
+if TYPE_CHECKING:
+    from models import UserLanguage, TranscriptionSample, TranslationSample, AnnotationSample, Challenge
 
 
 # ===================== LANGUAGES TABLE =====================
 class Language(SQLModel, table=True):
-    id: str = Field(primary_key=True, index=True)
+    __tablename__ = "language"
+
+    id: uuid.UUID = Field(
+        default_factory=uuid.uuid4,
+        primary_key=True,
+        index=True
+    )
+
     name: str
+    description: Optional[str] = Field(default=None, nullable=True)
+
+    is_active: bool = Field(default=True)
+
+    updated_at: Optional[datetime] = Field(
+        default=None,
+        sa_column=Column(DateTime(timezone=True))
+    )
+
+    code: str = Field(
+        index=True, unique=True
+    )  # ISO code
+
+    # Statistics
+    contribution_count: int = Field(default=0)
+    contributor_count: int = Field(default=0)
 
     # Relationships
-    contributions: List["Contribution"] = Relationship(back_populates="language")
-    user_languages: List["UserLanguage"] = Relationship(back_populates="language")
+    user_languages: List["UserLanguage"] = Relationship(
+        back_populates="language", sa_relationship_kwargs={"lazy": "select"}
+    )
+
+    transcriptions: List["TranscriptionSample"] = Relationship(
+        back_populates="language", sa_relationship_kwargs={"lazy": "select"}
+    )
+
+    translations: List["TranslationSample"] = Relationship(
+        back_populates="language", sa_relationship_kwargs={"lazy": "select"}
+    )
+
+    annotations: List["AnnotationSample"] = Relationship(
+        back_populates="language", sa_relationship_kwargs={"lazy": "select"}
+    )
+
+    challenges: List["Challenge"] = Relationship(
+        back_populates="language", sa_relationship_kwargs={"lazy": "select"}
+    )
 
 
-class UserLanguage(SQLModel, table=True):
-    id: Optional[int] = Field(primary_key=True)
-    user_id: str = Field(foreign_key="user.id")
-    language_id: str = Field(foreign_key="language.id")
-    total_hours_speech: Optional[int] = 0
-    total_sentences_translated: Optional[int] = 0
-
-    # Relationships
-    user: "User" = Relationship(back_populates="user_languages")
-    language: "Language" = Relationship(back_populates="user_languages")

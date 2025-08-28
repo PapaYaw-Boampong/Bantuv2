@@ -1,37 +1,259 @@
+import uuid
 from sqlmodel import SQLModel, Field, Relationship
-from typing import Optional, List, Dict
-from datetime import datetime
+from sqlalchemy import JSON
+from sqlalchemy import Column, DateTime
+from typing import List, Dict
+from datetime import datetime, timedelta, timezone
+from typing import Optional, TYPE_CHECKING
 
-from user import User
-from language import Language
+if TYPE_CHECKING:
+    from models import Language, TranscriptionContribution, TranslationContribution, AnnotationContribution \
+        , EvaluationInstance
 
 
 # ===================== TRANSCRIPTION SAMPLE TABLE =====================
 class TranscriptionSample(SQLModel, table=True):
-    id: str = Field(primary_key=True, index=True)
-    language_id: str = Field(foreign_key="language.id")
+    """
+        Represents a sample of transcribed speech.
 
-    audio_urls: List[Dict[str, str]] = Field(sa_column_kwargs={
-        "type": "json"})  # Stores multiple validated speech samples of the audio URLsaudio_url: str  # Stores the
+        This model stores information about a single transcription sample, including the
+        audio URLs, transcription text, category, and creation date. It also establishes
+        relationships with the Language and TranscriptionContribution models.Transcription
+        samples start of with the native language.
+        """
+    __tablename__ = "transcription_sample"
 
-    # URL/path of the audio file
-    transcription_text: str  # Stores the transcribed text
-    created_at: datetime = Field(default_factory=datetime.utcnow)
-    active: bool = Field(default=False)  # Becomes True when it meets a threshold of upvotes
+    id: uuid.UUID = Field(
+        default_factory=uuid.uuid4,
+        primary_key=True,
+        index=True
+    )
+    language_id: uuid.UUID = Field(foreign_key="language.id")
+
+    evaluation_instance_id: Optional[uuid.UUID] = Field(
+        default=None,
+        foreign_key="evaluation_instance.id"
+    )
+
+    # Stores multiple validated speech samples of the audio
+    audio_urls: List[Dict[str, str]] = Field(
+        sa_column=Column(JSON),
+        default=[]
+    )
+
+    transcription_text: str = Field(default=None, nullable=True)   # Stores the transcribed text
+
+    category: str = Field(default=None, nullable=True)  # e.g., "daily conversation", "technical", "medical"
+
+    created_at: datetime =  Field(
+        default_factory=lambda: datetime.now(timezone.utc) + timedelta(days=30),
+        sa_column=Column(DateTime(timezone=True), nullable=False),
+    )
+
+    last_active_at: datetime =  Field(
+        default_factory=lambda: datetime.now(timezone.utc) + timedelta(days=30),
+        sa_column=Column(DateTime(timezone=True), nullable=False),
+    )
+    eval: bool = Field(default=False)  # Becomes True when assigned to an evaluation instance
+    seed_count: int = Field(default=0)  # Store for the sample, used for tracking
+
+    priority: int = Field(default=0)  # Priority for transcription, higher means more important
 
     # Relationships
-    language: "Language" = Relationship(back_populates="transcriptions")
+    language: "Language" = Relationship(
+        back_populates="transcriptions"
+    )
+    contributions: List["TranscriptionContribution"] = Relationship(
+        back_populates="transcription_sample",
+        sa_relationship_kwargs={"cascade": "all, delete-orphan"}
+    )
+    evaluation_instance: Optional["EvaluationInstance"] = Relationship(
+        back_populates="transcription_sample",
+        sa_relationship_kwargs={"cascade": "all, delete-orphan",
+                                "single_parent": True}
+    )
+
+
+# ===================== TRANSLATION SEED DATA TABLE =====================
+class TranslationSeedData(SQLModel, table=True):
+    """
+       Represents the original base text (e.g., English) before translations are made in various languages.
+
+       This model stores information about the original text, including the text itself,
+       category, and creation date. It also establishes relationships with the TranslationSample model.
+       """
+    __tablename__ = "translation_seed_data"
+
+    id: uuid.UUID = Field(
+        default_factory=uuid.uuid4,
+        primary_key=True,
+        index=True
+    )
+
+    original_text: str  # The base text (usually English or a major language)
+    category: str = Field(default=None, nullable=True)  # e.g., "daily conversation", "technical", "medical"
+    created_at: datetime =  Field(
+        default_factory=lambda: datetime.now(timezone.utc) + timedelta(days=30),
+        sa_column=Column(DateTime(timezone=True), nullable=False),
+    )
+
+    active: bool = Field(default=False)  # Becomes True when assigned to a user
+
+    priority: int = Field(default=0)  # Priority for translation, higher means more important
+    # Relationships
+    translations: List["TranslationSample"] = Relationship(
+        back_populates="translation_seed_data",
+        sa_relationship_kwargs={"cascade": "all, delete-orphan"}
+    )
 
 
 # ===================== TRANSLATION SAMPLE TABLE =====================
 class TranslationSample(SQLModel, table=True):
-    id: str = Field(primary_key=True, index=True)
-    language_id: str = Field(foreign_key="language.id")
+    """
+        Represents a sample of translated text.
 
-    original_text: str  # The original text in English
-    translated_text: str  # The translated version of the text
-    created_at: datetime = Field(default_factory=datetime.utcnow)
-    validated: bool = Field(default=False)  # Becomes True when it meets a threshold of upvotes
+        This model stores information about a single translation sample, including the
+        translated text, seed data ID, language ID, and creation date. It also establishes
+        relationships with the TranslationSeedData and Language models.
+        """
+    __tablename__ = "translation_sample"
+
+    id: uuid.UUID = Field(
+        default_factory=uuid.uuid4,
+        primary_key=True,
+        index=True
+
+    )
+
+    seed_data_id: uuid.UUID = Field(foreign_key="translation_seed_data.id")
+    language_id: uuid.UUID = Field(foreign_key="language.id")
+    evaluation_instance_id: Optional[uuid.UUID] = Field(
+        default=None,
+        foreign_key="evaluation_instance.id"
+    )
+
+    translated_text: str = Field(default=None, nullable=True)  # Final translated version of the original text
+
+    created_at: datetime =  Field(
+        default_factory=lambda: datetime.now(timezone.utc) + timedelta(days=30),
+        sa_column=Column(DateTime(timezone=True), nullable=False),
+    )
+
+    eval: bool = Field(default=False)  # Becomes True when assigned to an evaluation instance
+
+    priority: int = Field(default=0)  # Priority for translation, higher means more important
+
+    seed_count: int = Field(default=0)
 
     # Relationships
-    language: "Language" = Relationship(back_populates="translations")
+    translation_seed_data: "TranslationSeedData" = Relationship(
+        back_populates="translations"
+    )
+    language: "Language" = Relationship(
+        back_populates="translations"
+    )
+    contributions: List["TranslationContribution"] = Relationship(
+        back_populates="translation_sample",
+        sa_relationship_kwargs={"cascade": "all, delete-orphan"}
+    )
+    evaluation_instance: Optional["EvaluationInstance"] = Relationship(
+        back_populates="translation_sample",
+        sa_relationship_kwargs={"cascade": "all, delete-orphan",
+                                "single_parent": True}
+    )
+
+
+# ===================== ANNOTATION SAMPLE TABLE =====================
+class AnnotationSeedData(SQLModel, table=True):
+    """
+        Represents the seed data for annotations.
+
+        This model stores information about the annotation seed data, including the
+        image URL, annotation text, category, and creation date. It also establishes
+        relationships with the AnnotationSample model. The data stored here is the base
+        seed data for the annotations, in English or a major language.
+        """
+    __tablename__ = "annotation_seed_data"
+
+    id: uuid.UUID = Field(
+        default_factory=uuid.uuid4,
+        primary_key=True,
+        index=True
+    )
+    file_name: str = Field(default=None, nullable=False)
+    source: str = Field(default=None, nullable=True)
+    annotation_text: str = Field(default=None, nullable=True)
+    category: str = Field(default=None, nullable=True)  # e.g., "daily conversation", "technical", "medical"
+    created_at: datetime =  Field(
+        default_factory=lambda: datetime.now(timezone.utc) + timedelta(days=30),
+        sa_column=Column(DateTime(timezone=True), nullable=False),
+    )
+    
+    active: bool = Field(default=False)
+
+    priority: int = Field(default=0)  # Priority for annotation, higher means more important
+
+    # Relationships
+    annotations: List["AnnotationSample"] = Relationship(
+        back_populates="annotation_seed_data",
+        sa_relationship_kwargs={"cascade": "all, delete-orphan", "lazy": "selectin"}
+    )
+
+
+# ===================== ANNOTATION SAMPLE TABLE =====================
+class AnnotationSample(SQLModel, table=True):
+    """
+        Represents a sample of annotated data.
+
+        This model stores information about a single annotation sample, including the
+        annotation result, seed data ID, language ID, and creation date. It also establishes
+        relationships with the AnnotationSeedData and Language models.
+        """
+    __tablename__ = "annotation_sample"
+
+    id: uuid.UUID = Field(
+        default_factory=uuid.uuid4,
+        primary_key=True,
+        index=True
+    )
+    seed_data_id: uuid.UUID = Field(foreign_key="annotation_seed_data.id")
+    language_id: uuid.UUID = Field(foreign_key="language.id")
+    evaluation_instance_id: Optional[uuid.UUID] = Field(
+        default=None,
+        foreign_key="evaluation_instance.id"
+    )
+
+    file_name: str = Field(default=None, nullable=True)
+
+    annotation_result: List[Dict[str, str]] = Field(
+        sa_column=Column(JSON),
+        default=[]
+    )
+
+    created_at: datetime =  Field(
+        default_factory=lambda: datetime.now(timezone.utc) + timedelta(days=30),
+        sa_column=Column(DateTime(timezone=True), nullable=False),
+    )
+    
+    eval: bool = Field(default=False)  # Becomes True when assigned to an evaluation instance
+
+    priority: int = Field(default=0)  # Priority for annotation, higher means more important
+
+    seed_count: int = Field(default=0)
+
+    # Relationships
+    annotation_seed_data: "AnnotationSeedData" = Relationship(
+        back_populates="annotations"
+    )
+    language: "Language" = Relationship(
+        back_populates="annotations"
+    )
+    annotation_contributions: List["AnnotationContribution"] = Relationship(
+        back_populates="annotation_sample",
+        sa_relationship_kwargs={"cascade": "all, delete-orphan"}
+    )
+    evaluation_instance: Optional["EvaluationInstance"] = Relationship(
+        back_populates="annotation_sample",
+        sa_relationship_kwargs={"cascade": "all, delete-orphan",
+                                "single_parent": True}
+    )
